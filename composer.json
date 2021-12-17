@@ -1,0 +1,23 @@
+{
+    "name": "lan/speed",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Lan\\Speed\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "lan",
+            "email": "1441360095@qq.com"
+        }
+    ],
+    "require": {
+        "bunny/bunny": "^0.2.4",
+        "react/stream": "0.4.5",
+        "ext-pcntl": "*",
+        "ext-posix": "*",
+        "ext-json": "*",
+        "ext-sockets": "*"
+    }
+}

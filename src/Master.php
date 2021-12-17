@@ -1,0 +1,569 @@
+<?php
+
+
+namespace Lan\Speed;
+
+use Bunny\Channel;
+use Bunny\Message;
+use Lan\Speed\Exception\DaemonException;
+use Lan\Speed\Exception\MessageFormatExcetion;
+use Lan\Speed\Exception\SocketCreateException;
+use Lan\Speed\Exception\SocketWriteException;
+use Lan\Speed\Exception\WorkerCreateException;
+use React\Promise\Promise;
+use function React\Promise\reject;
+
+
+/**
+ * Class Master
+ * @package Lan\Speed
+ *
+ * @event message
+ */
+class Master extends Process implements HandlerInterface
+{
+    /** @var int 清除缓存状态信息 */
+    const STATE_FLUSH_CACHE = 3;
+
+    /** @var WorkerFactory  进程创建工厂 */
+    private $workerFactory;
+
+    /** @var Connection 与broker保持的连接数 */
+    private $connection;
+
+    /** @var int 主进程当前状态 */
+    private $state = self::STATE_SHUTDOWN;
+
+    /** @var ScheduleWorker $scheduleWorker 进程调度器 */
+    private $scheduleWorker = null;
+
+    /** @var int 阻塞事件，一个阻塞周期默认为60秒, 和巡逻时间周期一致 */
+    private $blockTime = 60;
+
+    /**
+     * @var array 子进程信息
+     * 格式:    array(
+                   "pid" => [
+     *                  'stream' => ''    // react/stream
+     *              ]
+     *         )
+     *  当进程的创建和退出，此属性会动态更新，其有一个依赖项受调度器
+     */
+    protected $workers = array();
+
+    /**
+     * @var int 最大工作子进程数
+     */
+    protected $maxWorkerNum = 2;
+
+    /**
+     * @var int 消费完成数
+     */
+    private $consumedCount = 0;
+
+    /**
+     * 缓存消息
+     * @var \SplDoublyLinkedList $stashMessage
+     */
+    private $stashMessage;
+
+    /**
+     * @var int $maxCacheMessageCount 缓存消息最大数量
+     */
+    private $maxCacheMessageCount = 2;
+
+    /**
+     * @var array $statistics 统计数据
+     * 以进程id为key, value 为统计信息一个数组
+     * 格式:
+     * array(
+     *     '$workerPid' => array (
+     *         'receiveCount' => 0,
+     *         'consumedCount' => 0,
+     *         ...
+     *      )
+     * )
+     */
+    private $statistics = array();
+
+    /**
+     * @return int
+     */
+    public function getMaxWorkerNum()
+    {
+        return $this->maxWorkerNum;
+    }
+
+    /**
+     * @param int $maxWorkerNum
+     */
+    public function setMaxWorkerNum($maxWorkerNum)
+    {
+        $this->maxWorkerNum = $maxWorkerNum;
+        return $this;
+    }
+
+    /**
+     * @return int
+     */
+    public function getMaxCacheMessageCount()
+    {
+        return $this->maxCacheMessageCount;
+    }
+
+    /**
+     * @param int $maxCacheMessageCount
+     */
+    public function setMaxCacheMessageCount($maxCacheMessageCount)
+    {
+        $this->maxCacheMessageCount = $maxCacheMessageCount;
+        return $this;
+    }
+
+    public function __construct(Connection $connection, WorkerFactory $workerFactory)
+    {
+        $this->connection = $connection;
+        $this->workerFactory = $workerFactory;
+        $this->scheduleWorker = new ScheduleWorker();
+        $this->stashMessage = new \SplDoublyLinkedList();
+        parent::__construct();
+    }
+
+    /**
+     * 消息处理(子进程发送的消息)
+     * 消息类型目前有以下几种:
+     * MESSAGE_FINISHED:    子进程处理消息完成，回调给主进程
+     * MESSAGE_WORKER_EXIT: 子进程退出之前，会给主进程发送消息告知，
+     * MESSAGE_LAST_MORE:   子进程准备退出，告知主进程不要再发送消息给子进程
+     * @param MessageInterface $message
+     * @return mixed|void
+     */
+    public function handleMessage(MessageInterface $message)
+    {
+        $body = $message->getBody();
+        switch ($message->getAction()) {
+            // 子进程处理任务完毕
+            case MessageAction::MESSAGE_FINISHED:
+                $this->consumedCount++;
+                if (isset($body['pid']) && $body['pid']) {
+                    $this->scheduleWorker->workerFree($body['pid']);
+                    $this->statistics[$body['pid']]['consumedCount']++;
+                }
+                $this->dispatchCacheMessage();
+                break;
+
+            // 子进程退出
+            case MessageAction::MESSAGE_WORKER_EXIT:
+                $this->removeWorker($body['pid']);
+                $this->scheduleWorker->destroy($body['pid']);
+                break;
+
+            case MessageAction::MESSAGE_CUSTOM:
+                //TODO 自定义消息处理
+                break;
+            case MessageAction::MESSAGE_LAST:
+               //TODO 不再为子进程分配任务
+                if (isset($body['pid']) && $body['pid']) {
+                    $this->scheduleWorker->updateWorker($body['pid'], ScheduleWorker::WORKER_STATE_IGNORE);
+                }
+
+                break;
+            default:break;
+        }
+    }
+
+    /**
+     * 移除进程或某个进程信息
+     * @param int $pid
+     */
+    public function removeWorker($pid = 0) {
+        if ($pid) {
+            if (isset($this->workers[$pid])) {
+                unset($this->workers[$pid]['stream']);
+                unset($this->workers[$pid]);
+            }
+        } else {
+            foreach ($this->workers as $pid => $worker) {
+                unset($worker['stream']);
+                unset($this->workers[$pid]);
+            }
+        }
+    }
+
+    public function getWorkers() {
+        return $this->workers;
+    }
+
+    public function getWorkerCount() {
+        return count($this->workers);
+    }
+
+    public function isMaxLimit() {
+        if ($this->maxWorkerNum < 0) {
+            return false;
+        }
+
+        return $this->getWorkerCount() >= $this->maxWorkerNum;
+    }
+
+    /**
+     * 创建子进程，创建时机为没有空闲子进程时，系统自动创建进程处理任务
+     * @return int 进程id
+     * @throws SocketCreateException
+     * @throws WorkerCreateException
+     */
+    public function createWorker() {
+        $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+
+        if (!$sockets) {
+            throw new SocketCreateException();
+        }
+
+        $pid = pcntl_fork();
+
+        if ($pid > 0) { // 父进程
+            fclose($sockets[0]);
+            unset($sockets[0]);
+
+            $stream = new Stream($sockets[1], $this->getEventLoop());
+            $stream->on('data', [$this, 'receive']);
+            $stream->on('error', function ($error, $stream) {
+                $this->emit('error', [$error, $stream]);
+            });
+
+            $stream->on('close', function ($stream) {
+                // 告诉相应子进程，由于父进程与子进程通信通道被关闭，现在需要停止运行子进程
+
+            });
+
+            $this->workers[$pid]['stream'] = $stream;
+            $this->statistics[$pid] = $this->initStatistics();
+
+        } else if ($pid == 0) {
+            fclose($sockets[1]);
+            unset($sockets[1]);
+            unset($this->workers);
+            unset($this->stashMessage);
+            unset($this->scheduleWorker);
+
+            $this->removeAllListeners();
+
+            $worker = $this->workerFactory->makeWorker($sockets[0]);
+            $worker->run();
+
+        } else {
+            throw new WorkerCreateException();
+        }
+
+        return $pid;
+    }
+
+    public function removeChildWorkers() {
+        foreach ($this->workers as $pid => $worker) {
+            unset($worker['stream']);
+        }
+        unset($this->workers);
+    }
+
+    /**
+     * 主进程启动，正式开始任务循环分配
+     * @param bool $daemon
+     * @throws DaemonException
+     * @throws WorkerCreateException
+     */
+    public function run($daemon = true) {
+        if ($daemon) {
+            $this->daemon();
+        }
+
+        $this->state = self::STATE_RUNNING;
+
+        if (!$this->eventLoop) {
+            return;
+        }
+
+        $this->connection->setPrefetchCount(1)
+            ->setMessageHandler($this)
+            ->connect($this->eventLoop)->then()
+            ->then(null, function ($reason) {
+                $this->emit('error', [$reason]);
+                $this->state = self::STATE_SHUTDOWN;
+            });
+
+        while ($this->state == self::STATE_RUNNING) {
+            try {
+                $this->loop($this->blockTime);
+            } catch (\Exception $ex) {
+                $this->eventLoop->stop();
+                $this->emit('error', [$ex]);
+            }
+
+            $this->emit('patrolling', [$this]);
+        }
+
+        $this->flushCacheMessage();
+        $this->clearWorkers();
+
+        if ($this->connection && $this->connection->isConnected()) {
+            $this->connection->disconnect();
+        }
+    }
+
+    /**
+     * 退出所有子进程
+     */
+    public function clearWorkers() {
+        if ($this->state == self::STATE_SHUTDOWN) {
+            foreach ($this->workers as $pid => $worker) {
+                posix_kill($pid, SIGTERM);
+                unset($worker['stream']);
+                unset($this->workers[$pid]);
+            }
+        }
+    }
+
+    /**
+     * 将缓存消息情况，清空之前需要先把缓存的消息处理完毕
+     * @throws SocketCreateException
+     * @throws WorkerCreateException
+     */
+    public function flushCacheMessage() {
+        $this->state = self::STATE_FLUSH_CACHE;
+
+        while ($this->state == self::STATE_FLUSH_CACHE && $this->stashMessage->count() > 0) {
+            var_dump($this->scheduleWorker->getWorkerInfo());
+            while ($this->scheduleWorker->hasAvailableWorker()) {
+                var_dump(2);
+                $this->dispatchCacheMessage();
+            }
+            $this->loop(0.5);
+
+        }
+        $this->state = self::STATE_SHUTDOWN;
+    }
+
+    public function loop($period) {
+        if ($period) {
+            $this->eventLoop->addTimer($period, function ($timer) {
+                $this->eventLoop->stop();
+            });
+        }
+
+        try {
+            $this->eventLoop->run();
+        } catch (\Exception $ex) {
+            $this->emit('error', [$ex]);
+        }
+    }
+
+    public function stop() {
+        $this->state = self::STATE_SHUTDOWN;
+        $this->eventLoop->stop();
+    }
+
+    /**
+     * 派发消息给子进程
+     * @param MessageInterface $message
+     * @throws SocketCreateException
+     * @throws SocketWriteException
+     * @throws WorkerCreateException
+     */
+    public function dispatch(MessageInterface $message) {
+        $workerPid = $this->scheduleWorker->allocate();
+        if ($workerPid) {
+            $this->sendMessage($workerPid, $message);
+        } else if (count($this->workers) < $this->maxWorkerNum) {
+            $workerPid = $this->createWorker();
+            $this->scheduleWorker->workerFree($workerPid);
+            $this->scheduleWorker->workerAllocate($workerPid);
+            $this->sendMessage($workerPid, $message);
+        }
+    }
+
+    /**
+     * @throws SocketCreateException
+     * @throws WorkerCreateException
+     */
+    public function dispatchCacheMessage() {
+        if (!$this->scheduleWorker->hasAvailableWorker()) {
+            return;
+        }
+
+        $count = $this->stashMessage->count();
+        if ($count > 0) {
+            try {
+                $message = unserialize($this->stashMessage->offsetGet(0));
+                $this->stashMessage->shift();
+                $this->dispatch($message);
+            } catch (\Exception $ex) {
+                $this->emit('error', [$ex]);
+            }
+
+        } else if ($this->state == self::STATE_RUNNING) {
+            if ($this->connection->isConnected()) {
+                $this->connection->resume()->then(null, function ($ex) {
+                    $this->emit('error', [$ex]);
+                });
+            }
+        }
+    }
+
+    public function cacheMessage(MessageInterface $message) {
+         $this->stashMessage->push(serialize($message));
+    }
+
+    public function isReachedMaxCahcheCount() {
+        return $this->stashMessage->count() >= $this->maxCacheMessageCount;
+    }
+
+    /**
+     * 进程后台挂起
+     * @throws DaemonException
+     * @throws WorkerCreateException
+     */
+    public function daemon() {
+        if (!extension_loaded('pcntl')) {
+            throw new DaemonException();
+        }
+
+        $pid = pcntl_fork();
+        if ($pid) {
+            exit(0);
+        } else if ($pid == 0) {
+            posix_setsid();
+            chdir('/');
+
+            /*
+             * 通过上一步，我们创建了一个新的会话组长，进程组长，且脱离了终端，但是会话组长可以申请重新打开一个终端，为了避免
+             * 这种情况，我们再次创建一个子进程，并退出当前进程，这样运行的进程就不再是会话组长。
+             */
+            $pid = pcntl_fork();
+            if ($pid == -1) {
+                throw new WorkerCreateException();
+            } elseif ($pid > 0) {
+                exit(0);
+            }
+
+            // 由于守护进程用不到标准输入输出，关闭标准输入，输出，错误输出描述符
+            fclose(STDIN);
+            fclose(STDOUT);
+            fclose(STDERR);
+
+        } else if ($pid == -1) {
+            throw new WorkerCreateException();
+        }
+    }
+
+    /**
+     * 向子进程发送消息
+     * @param $workerPid
+     * @param MessageInterface $message
+     */
+    public function sendMessage($workerPid, MessageInterface $message) {
+        if (isset($this->workers[$workerPid]['stream'])) {
+            /** @var Stream $stream */
+            $stream = $this->workers[$workerPid]['stream'];
+            if ($stream->isWritable()) {
+                $stream->write(serialize($message));
+                $this->statistics[$workerPid]['receiveCount']++;
+                $this->scheduleWorker->workerBusy($workerPid);
+            } else {
+                throw new SocketWriteException();
+            }
+        }
+    }
+
+    public function initStatistics() {
+        return array(
+            'receiveCount' => 0,
+            'consumedCount' => 0
+        );
+    }
+
+    /**
+     * 收到子进程的消息
+     * @param $data
+     * @param Stream $stream
+     * @throws MessageFormatExcetion
+     */
+    public function receive($data, Stream $stream) {
+        /** @var MessageInterface $message */
+        $message = unserialize($data);
+
+        if ($message instanceof \Lan\Speed\Impl\Message) {
+            $this->handleMessage($message);
+        } else if (is_string($message)) {
+            $message = json_decode($message, true);
+            if ($message) {
+                $this->handleMessage($message);
+            }
+        } else {
+            throw new MessageFormatExcetion();
+        }
+
+    }
+
+    /**
+     * 统计数据
+     * @return array
+     */
+    public function stat() {
+        return array(
+            'countChildWorkers' => count($this->workers),
+            'consumedMessageCount' => $this->consumedCount,
+            'cacheMessage' => $this->stashMessage->count(),
+            'freeWorkerCount' => $this->scheduleWorker->getFreeWorker(),
+            'workers' => $this->statistics,
+        );
+    }
+
+    /**
+     * 进程消费处理器
+     * @param Message $message
+     * @param Channel $channel
+     * @param BunnyClient $client
+     * @param $queue
+     * @return bool|\React\Promise\PromiseInterface|\React\Promise\RejectedPromise
+     */
+    public function consume(Message $message, Channel $channel, BunnyClient $client, $queue)
+    {
+        try {
+            $newMessage = new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_CONSUME, json_encode([
+                'routingKey' => $message->routingKey ?: '',
+                'consumerTag' => $message->consumerTag,
+                'exchange' => $message->exchange,
+                'body' => $message->content,
+                'queue' => $queue,
+            ]));
+
+            // 子进程数达到最大限制
+            $isCache = $this->isMaxLimit() && !$this->scheduleWorker->hasAvailableWorker();
+            if ($isCache) {
+                $this->cacheMessage($newMessage);
+            } else {
+                $this->dispatch($newMessage);
+            }
+
+            /**
+             * @var Promise $promise
+             */
+            $promise =  $channel->ack($message);
+
+            // 缓存消息达到最大缓存数量，停止从消息中心broker中派发消息
+            if ($isCache && $this->isReachedMaxCahcheCount()) {
+                $promise->always(function () {
+                    if ($this->isReachedMaxCahcheCount()) {
+                        $this->connection->pause()->then(null, function ($ex) {
+                            $this->emit('error', [$ex]);
+                        });
+                    }
+                });
+            }
+
+            return $promise;
+
+        } catch (\Exception $ex) {
+            return reject($ex);
+        }
+    }
+}
