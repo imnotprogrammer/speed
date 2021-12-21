@@ -2,6 +2,9 @@
 
 require_once 'vendor/autoload.php';
 
+$rabbitmqMap = [
+    ['exchange' => 'xx', 'que']
+];
 $queues = [
     'hello',
     'world',
@@ -9,19 +12,26 @@ $queues = [
 ];
 
 $connection  = new \Lan\Speed\Connection([
-    'host' => '192.168.123.142'
+    'host' => '192.168.123.142',
+    'username' => 'rabbitmq_user',
+    'password' => '123456',
+    'vhost' => 'docs',
 ], $queues);
 
+//$connection->setPrefetchCount(10);
 $factory = new \Lan\Speed\WorkerFactory();
 
 $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
     $worker->setName('worker:consumer:' . $worker->getPid());
+    //$worker->setMaxFreeTime(5);
 })->registerEvent('end', function (\Lan\Speed\Worker $worker) {
-    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
-        'pid' => $worker->getPid()
-    ]));
+//    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
+//        'pid' => $worker->getPid()
+//    ]));
 })->registerEvent('message', function (\Lan\Speed\Worker $worker, \Lan\Speed\Impl\Message $message) {
-    //usleep(200000);
+    usleep(100000);
+    $body = json_decode($message->getBody(), true);
+    echo 'message '.$body['consumerTag'].' be consumed, by worker:'.$worker->getPid() . PHP_EOL;
     $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_FINISHED, [
         'pid' => $worker->getPid()
     ]));
@@ -29,16 +39,9 @@ $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
 
 $master = new \Lan\Speed\Master($connection, $factory);
 $master->setName('master:dispatcher')
-    ->setMaxCacheMessageCount(2000)
-    ->setMaxWorkerNum(4)
-    ->addSignal(SIGCHLD, function ($signal) use ($master) {
-        while ($pid = pcntl_wait($status, WNOHANG)) {
-            $master->removeWorker($pid);
-            if (count($master->getWorkers()) <= 0) {
-                break;
-            }
-        }
-})->addSignal(SIGINT, function ($signal) use ($master) {
+->setMaxCacheMessageCount(2000)
+->setMaxWorkerNum(4)
+->addSignal(SIGINT, function ($signal) use ($master) {
     $master->stop();
 })->addSignal(SIGTERM, function ($signal) use ($master) {
     $master->stop();
@@ -46,6 +49,8 @@ $master->setName('master:dispatcher')
     print_r($master->stat());
 })->on('error', function (\Exception $ex) {
     var_dump($ex->getMessage());
+})->on('workerExit', function ($pid, $master) {
+    echo 'worker ', $pid, ' exit!!!', PHP_EOL;
 });
 
 $master->run(false);

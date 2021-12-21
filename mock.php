@@ -46,11 +46,7 @@ var_dump($test->getName());
 unset($newMock);
 var_dump($test->getName());
 
-$list = new SplDoublyLinkedList();
 
-$list->push($mock);
-var_dump($list->count());
-var_dump($list->offsetGet(0));
-$list->shift();
-var_dump($list->count());
-var_dump($list->offsetGet(0));
+
+
+posix_kill(111111111111111111111111,15);

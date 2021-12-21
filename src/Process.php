@@ -31,6 +31,9 @@ abstract class Process extends EventEmitter
      */
     protected $pid;
 
+
+    private $signalHandlers = array();
+
     /**
      * 父进程和子进程都需要实现此方法，用于父进程与子进程的通信
      * @param MessageInterface $message
@@ -40,7 +43,6 @@ abstract class Process extends EventEmitter
 
     public function __construct() {
         $this->eventLoop = Factory::create();
-        //cli_set_process_title($this->getName());
     }
 
     /**
@@ -51,7 +53,18 @@ abstract class Process extends EventEmitter
      */
     public function addSignal($signal, callable $handler) {
         $this->eventLoop->addSignal($signal, $handler);
+        $this->signalHandlers[$signal][] = $handler;
         return $this;
+    }
+
+    public function removeAllSignal() {
+        foreach ($this->signalHandlers as $signal => $handlers) {
+            foreach ($handlers as $handle) {
+                $this->eventLoop->removeSignal($signal, $handle);
+            }
+        }
+
+        $this->signalHandlers = array();
     }
 
 

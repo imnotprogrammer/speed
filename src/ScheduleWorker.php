@@ -18,7 +18,10 @@ class ScheduleWorker
     const WORKER_STATE_ALLOCATE = 2;
 
     /** @var int 进程当前状态-不在处理消息 */
-    const WORKER_STATE_IGNORE = 2;
+    const WORKER_STATE_IGNORE = 3;
+
+    /** @var int 进程不存在 */
+    const WORKER_STATE_NOT_EXIST = -1;
 
     const WORKER_BUSY = 'busy';
     const WORKER_FREE = 'free';
@@ -153,7 +156,27 @@ class ScheduleWorker
         }
     }
 
+    /**
+     * 将工作进程进行退休
+     * @param $workerPid
+     */
+    public function retireWorker($workerPid) {
+        if (isset($this->workerInfo[$workerPid])) {
+            $status = $this->workerInfo[$workerPid];
+            if ($status == self::WORKER_STATE_BUSY) {
+                $this->decr(self::WORKER_BUSY);
+            } else if ($status == self::WORKER_STATE_FREE) {
+                $this->decr();
+            }
+            $this->workerInfo[$workerPid] = self::WORKER_STATE_IGNORE;
+        }
+    }
+
     public function getFreeWorker() {
         return $this->freeCount;
+    }
+
+    public function getWorkerState($pid) {
+        return isset($this->workerInfo[$pid]) ? $this->workerInfo[$pid] : '-1';
     }
 }

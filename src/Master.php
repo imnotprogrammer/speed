@@ -87,6 +87,28 @@ class Master extends Process implements HandlerInterface
     private $statistics = array();
 
     /**
+     * 取消阻塞定时器
+     * @var null
+     */
+    private $processTimer = null;
+
+
+    /**
+     * Master constructor.
+     * @param Connection $connection
+     * @param WorkerFactory $workerFactory
+     */
+    public function __construct(Connection $connection, WorkerFactory $workerFactory)
+    {
+        $this->connection = $connection;
+        $this->workerFactory = $workerFactory;
+        $this->scheduleWorker = new ScheduleWorker();
+        $this->stashMessage = new \SplDoublyLinkedList();
+        parent::__construct();
+        $this->init();
+    }
+
+    /**
      * @return int
      */
     public function getMaxWorkerNum()
@@ -120,21 +142,24 @@ class Master extends Process implements HandlerInterface
         return $this;
     }
 
-    public function __construct(Connection $connection, WorkerFactory $workerFactory)
-    {
-        $this->connection = $connection;
-        $this->workerFactory = $workerFactory;
-        $this->scheduleWorker = new ScheduleWorker();
-        $this->stashMessage = new \SplDoublyLinkedList();
-        parent::__construct();
+    private function init() {
+        $this->addSignal(SIGCHLD, function ($signal)  {
+            while ($pid = pcntl_wait($status, WNOHANG)) {
+                $this->removeWorker($pid);
+                $this->emit('workerExit', [$pid, $this]);
+                if (count($this->getWorkers()) <= 0) {
+                    break;
+                }
+            }
+        });
     }
 
     /**
      * 消息处理(子进程发送的消息)
      * 消息类型目前有以下几种:
      * MESSAGE_FINISHED:    子进程处理消息完成，回调给主进程
-     * MESSAGE_WORKER_EXIT: 子进程退出之前，会给主进程发送消息告知，
-     * MESSAGE_LAST_MORE:   子进程准备退出，告知主进程不要再发送消息给子进程
+     * MESSAGE_READY_EXIT:  子进程退出之前，会给主进程发送消息告知，
+     * MESSAGE_QUIT_ME:     子进程收到 MESSAGE_LAST后，会回执此消息
      * @param MessageInterface $message
      * @return mixed|void
      */
@@ -152,21 +177,17 @@ class Master extends Process implements HandlerInterface
                 $this->dispatchCacheMessage();
                 break;
 
-            // 子进程退出
-            case MessageAction::MESSAGE_WORKER_EXIT:
-                $this->removeWorker($body['pid']);
-                $this->scheduleWorker->destroy($body['pid']);
+            // 子进程准备退出
+            case MessageAction::MESSAGE_READY_EXIT:
+                $this->scheduleWorker->retireWorker($body['pid']);
+                $this->sendMessage($body['pid'], new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
                 break;
-
+            // 子进程已经准备好了，发送此消息
+            case MessageAction::MESSAGE_QUIT_ME:
+                $this->sendMessage($body['pid'], new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_YOU_EXIT));
+                break;
             case MessageAction::MESSAGE_CUSTOM:
                 //TODO 自定义消息处理
-                break;
-            case MessageAction::MESSAGE_LAST:
-               //TODO 不再为子进程分配任务
-                if (isset($body['pid']) && $body['pid']) {
-                    $this->scheduleWorker->updateWorker($body['pid'], ScheduleWorker::WORKER_STATE_IGNORE);
-                }
-
                 break;
             default:break;
         }
@@ -181,21 +202,15 @@ class Master extends Process implements HandlerInterface
             if (isset($this->workers[$pid])) {
                 unset($this->workers[$pid]['stream']);
                 unset($this->workers[$pid]);
+                $this->scheduleWorker->retireWorker($pid);
             }
         } else {
             foreach ($this->workers as $pid => $worker) {
                 unset($worker['stream']);
                 unset($this->workers[$pid]);
+                $this->scheduleWorker->retireWorker($pid);
             }
         }
-    }
-
-    public function getWorkers() {
-        return $this->workers;
-    }
-
-    public function getWorkerCount() {
-        return count($this->workers);
     }
 
     public function isMaxLimit() {
@@ -231,9 +246,9 @@ class Master extends Process implements HandlerInterface
                 $this->emit('error', [$error, $stream]);
             });
 
-            $stream->on('close', function ($stream) {
+            $stream->on('close', function ($stream) use ($pid) {
                 // 告诉相应子进程，由于父进程与子进程通信通道被关闭，现在需要停止运行子进程
-
+                //$this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
             });
 
             $this->workers[$pid]['stream'] = $stream;
@@ -245,8 +260,12 @@ class Master extends Process implements HandlerInterface
             unset($this->workers);
             unset($this->stashMessage);
             unset($this->scheduleWorker);
+            unset($this->statistics);
 
+            $this->cancelProcessTimer();
             $this->removeAllListeners();
+            $this->removeAllSignal();
+            unset($this->eventLoop);
 
             $worker = $this->workerFactory->makeWorker($sockets[0]);
             $worker->run();
@@ -258,12 +277,6 @@ class Master extends Process implements HandlerInterface
         return $pid;
     }
 
-    public function removeChildWorkers() {
-        foreach ($this->workers as $pid => $worker) {
-            unset($worker['stream']);
-        }
-        unset($this->workers);
-    }
 
     /**
      * 主进程启动，正式开始任务循环分配
@@ -281,8 +294,8 @@ class Master extends Process implements HandlerInterface
         if (!$this->eventLoop) {
             return;
         }
-
-        $this->connection->setPrefetchCount(1)
+       $this->emit('start', [$this]);
+        $this->connection->setPrefetchCount(10)
             ->setMessageHandler($this)
             ->connect($this->eventLoop)->then()
             ->then(null, function ($reason) {
@@ -307,6 +320,8 @@ class Master extends Process implements HandlerInterface
         if ($this->connection && $this->connection->isConnected()) {
             $this->connection->disconnect();
         }
+
+        $this->emit('end', [$this]);
     }
 
     /**
@@ -328,24 +343,36 @@ class Master extends Process implements HandlerInterface
      * @throws WorkerCreateException
      */
     public function flushCacheMessage() {
-        $this->state = self::STATE_FLUSH_CACHE;
-
-        while ($this->state == self::STATE_FLUSH_CACHE && $this->stashMessage->count() > 0) {
-            var_dump($this->scheduleWorker->getWorkerInfo());
+        $this->printAlertMessage();
+        while ($this->state == self::STATE_FLUSH_CACHE
+            && $this->stashMessage->count() > 0
+        ) {
             while ($this->scheduleWorker->hasAvailableWorker()) {
-                var_dump(2);
                 $this->dispatchCacheMessage();
             }
-            $this->loop(0.5);
 
+            $this->loop(0.5);
         }
         $this->state = self::STATE_SHUTDOWN;
     }
 
+    public function printAlertMessage() {
+        echo $this->getAlertMessage();
+    }
+
+    public function getAlertMessage() {
+        return sprintf("message have some cache, need to process. message count: %s. it will take some time,please waiting...\n", count($this->stashMessage));
+    }
+
+    /**
+     * 异步时间循环处理器
+     * @param $period
+     */
     public function loop($period) {
         if ($period) {
-            $this->eventLoop->addTimer($period, function ($timer) {
+            $this->processTimer = $this->eventLoop->addTimer($period, function ($timer) {
                 $this->eventLoop->stop();
+                $this->processTimer = null;
             });
         }
 
@@ -356,9 +383,29 @@ class Master extends Process implements HandlerInterface
         }
     }
 
+    /**
+     * 停止进程
+     */
     public function stop() {
-        $this->state = self::STATE_SHUTDOWN;
-        $this->eventLoop->stop();
+        if ($this->state != self::STATE_RUNNING) {
+            return;
+        }
+
+        $this->connection->disconnect()->then(function () {
+            $this->state = self::STATE_FLUSH_CACHE;
+            $this->cancelProcessTimer();
+            $this->eventLoop->stop();
+        });
+    }
+
+    /**
+     * 移除阻塞定时器
+     */
+    public function cancelProcessTimer() {
+        if ($this->processTimer) {
+            $this->eventLoop->cancelTimer($this->processTimer);
+            $this->processTimer = null;
+        }
     }
 
     /**
@@ -407,6 +454,8 @@ class Master extends Process implements HandlerInterface
             }
         }
     }
+
+   // public function termite
 
     public function cacheMessage(MessageInterface $message) {
          $this->stashMessage->push(serialize($message));
@@ -473,13 +522,6 @@ class Master extends Process implements HandlerInterface
         }
     }
 
-    public function initStatistics() {
-        return array(
-            'receiveCount' => 0,
-            'consumedCount' => 0
-        );
-    }
-
     /**
      * 收到子进程的消息
      * @param $data
@@ -508,12 +550,16 @@ class Master extends Process implements HandlerInterface
      * @return array
      */
     public function stat() {
+        foreach ($this->statistics as $key => $statistic) {
+            $this->statistics[$key]['state'] = $this->scheduleWorker->getWorkerState($key);
+        }
+
         return array(
             'countChildWorkers' => count($this->workers),
             'consumedMessageCount' => $this->consumedCount,
-            'cacheMessage' => $this->stashMessage->count(),
+            'cacheMessage' => count($this->stashMessage),
             'freeWorkerCount' => $this->scheduleWorker->getFreeWorker(),
-            'workers' => $this->statistics,
+            'statistics' => $this->statistics,
         );
     }
 
@@ -565,5 +611,30 @@ class Master extends Process implements HandlerInterface
         } catch (\Exception $ex) {
             return reject($ex);
         }
+    }
+
+    /**
+     * @return array
+     */
+    public function getWorkers() {
+        return $this->workers;
+    }
+
+    /**
+     * @return int
+     */
+    public function getWorkerCount() {
+        return count($this->workers);
+    }
+
+    /**
+     * 初始化进程统计消息
+     * @return int[]
+     */
+    public function initStatistics() {
+        return array(
+            'receiveCount' => 0,
+            'consumedCount' => 0
+        );
     }
 }
