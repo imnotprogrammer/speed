@@ -23,24 +23,19 @@ $factory = new \Lan\Speed\WorkerFactory();
 
 $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
     $worker->setName('worker:consumer:' . $worker->getPid());
-    //$worker->setMaxFreeTime(5);
+    $worker->setMaxFreeTime(5);
 })->registerEvent('end', function (\Lan\Speed\Worker $worker) {
 //    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
 //        'pid' => $worker->getPid()
 //    ]));
 })->registerEvent('message', function (\Lan\Speed\Worker $worker, \Lan\Speed\Impl\Message $message) {
-    usleep(100000);
     $body = json_decode($message->getBody(), true);
-    echo 'message '.$body['consumerTag'].' be consumed, by worker:'.$worker->getPid() . PHP_EOL;
-    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_FINISHED, [
-        'pid' => $worker->getPid()
-    ]));
 });
 
 $master = new \Lan\Speed\Master($connection, $factory);
 $master->setName('master:dispatcher')
 ->setMaxCacheMessageCount(2000)
-->setMaxWorkerNum(4)
+->setMaxWorkerNum(80)
 ->addSignal(SIGINT, function ($signal) use ($master) {
     $master->stop();
 })->addSignal(SIGTERM, function ($signal) use ($master) {

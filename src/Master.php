@@ -62,6 +62,11 @@ class Master extends Process implements HandlerInterface
     private $consumedCount = 0;
 
     /**
+     * @var int 收到消息中心投放的消息数
+     */
+    private $receiveCount = 0;
+
+    /**
      * 缓存消息
      * @var \SplDoublyLinkedList $stashMessage
      */
@@ -70,7 +75,7 @@ class Master extends Process implements HandlerInterface
     /**
      * @var int $maxCacheMessageCount 缓存消息最大数量
      */
-    private $maxCacheMessageCount = 2;
+    private $maxCacheMessageCount = 2000;
 
     /**
      * @var array $statistics 统计数据
@@ -492,11 +497,8 @@ class Master extends Process implements HandlerInterface
             } elseif ($pid > 0) {
                 exit(0);
             }
-
             // 由于守护进程用不到标准输入输出，关闭标准输入，输出，错误输出描述符
-            fclose(STDIN);
-            fclose(STDOUT);
-            fclose(STDERR);
+            fclose(STDIN) && fclose(STDOUT) && fclose(STDERR);
 
         } else if ($pid == -1) {
             throw new WorkerCreateException();
@@ -550,16 +552,20 @@ class Master extends Process implements HandlerInterface
      * @return array
      */
     public function stat() {
+        $workerConsumed = 0;
         foreach ($this->statistics as $key => $statistic) {
             $this->statistics[$key]['state'] = $this->scheduleWorker->getWorkerState($key);
+            $workerConsumed += $statistic['consumedCount'];
         }
 
         return array(
             'countChildWorkers' => count($this->workers),
             'consumedMessageCount' => $this->consumedCount,
+            'receivedMessageCount' => $this->receiveCount,
             'cacheMessage' => count($this->stashMessage),
             'freeWorkerCount' => $this->scheduleWorker->getFreeWorker(),
             'statistics' => $this->statistics,
+            'workerConsumedCount' => $workerConsumed
         );
     }
 
@@ -574,14 +580,15 @@ class Master extends Process implements HandlerInterface
     public function consume(Message $message, Channel $channel, BunnyClient $client, $queue)
     {
         try {
-            $newMessage = new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_CONSUME, json_encode([
+            $messageArr = array(
                 'routingKey' => $message->routingKey ?: '',
                 'consumerTag' => $message->consumerTag,
                 'exchange' => $message->exchange,
                 'body' => $message->content,
                 'queue' => $queue,
-            ]));
+            );
 
+            $newMessage = new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_CONSUME, json_encode($messageArr));
             // 子进程数达到最大限制
             $isCache = $this->isMaxLimit() && !$this->scheduleWorker->hasAvailableWorker();
             if ($isCache) {
@@ -590,6 +597,7 @@ class Master extends Process implements HandlerInterface
                 $this->dispatch($newMessage);
             }
 
+            $this->receiveCount++;
             /**
              * @var Promise $promise
              */
