@@ -23,7 +23,10 @@ class ScheduleWorker
     /** @var int 进程不存在 */
     const WORKER_STATE_NOT_EXIST = -1;
 
+    /** @var string 繁忙标识 */
     const WORKER_BUSY = 'busy';
+
+    /** @var string 空闲标识 */
     const WORKER_FREE = 'free';
 
     /** @var array 进程调度表
@@ -34,8 +37,10 @@ class ScheduleWorker
      */
     private $workerInfo = array();
 
+    /** @var int 空闲进程数 */
     private $freeCount = 0;
 
+    /** @var int 繁忙进程数 */
     private $busyCount = 0;
 
     /**
@@ -55,8 +60,9 @@ class ScheduleWorker
         return 0;
     }
 
+    /** 是否有可用的工作(子)进程 */
     public function hasAvailableWorker() {
-        return $this->freeCount > 0;
+        return $this->getFreeWorker() > 0;
     }
 
     /**
@@ -128,6 +134,10 @@ class ScheduleWorker
         return $this->workerInfo;
     }
 
+    /**
+     * 增加空闲/繁忙进程数
+     * @param string $type 状态标识
+     */
     public function incr($type = self::WORKER_FREE) {
         switch ($type) {
             case self::WORKER_BUSY:
@@ -141,6 +151,10 @@ class ScheduleWorker
         }
     }
 
+    /**
+     * 减少空闲/繁忙进程
+     * @param string $type 状态标识
+     */
     public function decr($type = self::WORKER_FREE) {
         switch ($type) {
             case self::WORKER_BUSY:

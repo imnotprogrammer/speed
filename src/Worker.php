@@ -159,9 +159,8 @@ class Worker extends Process
         $this->emit('start', [$this]);
 
         while ($this->state != self::STATE_SHUTDOWN) {
-
             $this->getEventLoop()->addTimer($this->blockPeriod, function ($timer) {
-                $this->getEventLoop()->stop();;
+                $this->getEventLoop()->stop();
             });
 
             try {

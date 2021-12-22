@@ -151,7 +151,6 @@ class Master extends Process implements HandlerInterface
         $this->addSignal(SIGCHLD, function ($signal)  {
             while ($pid = pcntl_wait($status, WNOHANG)) {
                 $this->removeWorker($pid);
-                $this->emit('workerExit', [$pid, $this]);
                 if (count($this->getWorkers()) <= 0) {
                     break;
                 }
@@ -208,6 +207,7 @@ class Master extends Process implements HandlerInterface
                 unset($this->workers[$pid]['stream']);
                 unset($this->workers[$pid]);
                 $this->scheduleWorker->retireWorker($pid);
+                $this->emit('workerExit', [$pid, $this]);
             }
         } else {
             foreach ($this->workers as $pid => $worker) {
@@ -234,17 +234,14 @@ class Master extends Process implements HandlerInterface
      */
     public function createWorker() {
         $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
-
         if (!$sockets) {
             throw new SocketCreateException();
         }
 
         $pid = pcntl_fork();
-
         if ($pid > 0) { // 父进程
             fclose($sockets[0]);
             unset($sockets[0]);
-
             $stream = new Stream($sockets[1], $this->getEventLoop());
             $stream->on('data', [$this, 'receive']);
             $stream->on('error', function ($error, $stream) {
@@ -262,7 +259,6 @@ class Master extends Process implements HandlerInterface
         } else if ($pid == 0) {
             fclose($sockets[1]);
             unset($sockets[1]);
-            unset($this->workers);
             unset($this->stashMessage);
             unset($this->scheduleWorker);
             unset($this->statistics);
@@ -270,7 +266,10 @@ class Master extends Process implements HandlerInterface
             $this->cancelProcessTimer();
             $this->removeAllListeners();
             $this->removeAllSignal();
+            //$this->removeWorker();
+
             unset($this->eventLoop);
+            unset($this->workers);
 
             $worker = $this->workerFactory->makeWorker($sockets[0]);
             $worker->run();
@@ -331,14 +330,20 @@ class Master extends Process implements HandlerInterface
 
     /**
      * 退出所有子进程
+     * @throws SocketWriteException
      */
     public function clearWorkers() {
         if ($this->state == self::STATE_SHUTDOWN) {
             foreach ($this->workers as $pid => $worker) {
-                posix_kill($pid, SIGTERM);
-                unset($worker['stream']);
-                unset($this->workers[$pid]);
+                // 安全退出
+                $this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
             }
+
+            while (count($this->workers) > 0) {
+                $this->loop(0.1);//阻塞100毫秒，等待子进程退出
+            }
+
+            $this->cancelProcessTimer();
         }
     }
 
@@ -481,27 +486,22 @@ class Master extends Process implements HandlerInterface
         }
 
         $pid = pcntl_fork();
-        if ($pid) {
-            exit(0);
-        } else if ($pid == 0) {
-            posix_setsid();
-            chdir('/');
-
-            /*
-             * 通过上一步，我们创建了一个新的会话组长，进程组长，且脱离了终端，但是会话组长可以申请重新打开一个终端，为了避免
-             * 这种情况，我们再次创建一个子进程，并退出当前进程，这样运行的进程就不再是会话组长。
-             */
-            $pid = pcntl_fork();
-            if ($pid == -1) {
-                throw new WorkerCreateException();
-            } elseif ($pid > 0) {
-                exit(0);
-            }
-            // 由于守护进程用不到标准输入输出，关闭标准输入，输出，错误输出描述符
-            fclose(STDIN) && fclose(STDOUT) && fclose(STDERR);
-
-        } else if ($pid == -1) {
+        if ($pid == -1) {
             throw new WorkerCreateException();
+        } elseif ($pid > 0) {
+            // 让由用户启动的进程退出
+            exit(0);
+        }
+
+        // 建立一个有别于终端的新session以脱离终端
+        posix_setsid();
+
+        $pid = pcntl_fork();
+        if ($pid == -1) {
+            throw new WorkerCreateException();
+        } elseif ($pid > 0) {
+            // 父进程退出, 剩下子进程成为最终的独立进程
+            exit(0);
         }
     }
 

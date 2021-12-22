@@ -23,12 +23,4 @@ class Message implements \Lan\Speed\MessageInterface
     {
         return $this->body;
     }
-
-    public function arrTo($arr) {
-        if (isset($arr['action']) && isset($arr['body'])) {
-            return new self($arr['action'], $arr['body']);
-        }
-
-        return false;
-    }
 }

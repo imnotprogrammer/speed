@@ -46,7 +46,7 @@ var_dump($test->getName());
 unset($newMock);
 var_dump($test->getName());
 
+while($line = fopen("php://stdin", 'r')) {
+    echo fgets($line);
+}
 
-
-
-posix_kill(111111111111111111111111,15);
