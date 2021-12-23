@@ -298,6 +298,7 @@ class Master extends Process implements HandlerInterface
         if (!$this->eventLoop) {
             return;
         }
+
        $this->emit('start', [$this]);
         $this->connection->setPrefetchCount(10)
             ->setMessageHandler($this)
@@ -336,6 +337,7 @@ class Master extends Process implements HandlerInterface
         if ($this->state == self::STATE_SHUTDOWN) {
             foreach ($this->workers as $pid => $worker) {
                 // 安全退出
+
                 $this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
             }
 

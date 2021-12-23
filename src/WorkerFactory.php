@@ -25,7 +25,7 @@ class WorkerFactory
     public function makeWorker($socket) {
         $worker = new Worker($socket);
         $worker->addSignal(SIGINT, function ($signal) use ($worker) {
-            //$worker->stop();
+            $worker->stop();
         });
 
         $worker->addSignal(SIGTERM, function ($signal) use ($worker) {

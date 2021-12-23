@@ -148,7 +148,6 @@ class Worker extends Process
         $this->sendMessage(new Message(MessageAction::MESSAGE_READY_EXIT, [
             'pid' => $this->getPid()
         ]));
-        $this->state = self::STATE_READING_EXIT;
     }
 
     /**
@@ -158,6 +157,7 @@ class Worker extends Process
         $this->state = self::STATE_RUNNING;
         $this->emit('start', [$this]);
 
+        $this->updateMonitorTimer();
         while ($this->state != self::STATE_SHUTDOWN) {
             $this->getEventLoop()->addTimer($this->blockPeriod, function ($timer) {
                 $this->getEventLoop()->stop();
@@ -184,8 +184,8 @@ class Worker extends Process
 
 
     public function stop() {
-        $this->state = self::STATE_SHUTDOWN;
-        $this->getEventLoop()->stop();
+        $this->cancelMonitorTimer();
+        $this->eventLoop->stop();
     }
 
     /**

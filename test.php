@@ -3,7 +3,7 @@
 require_once 'vendor/autoload.php';
 
 $rabbitmqMap = [
-    ['exchange' => 'xx', 'que']
+    //['exchange' => 'xx', 'que']
 ];
 $queues = [
     'hello',
@@ -39,18 +39,21 @@ $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
 
 $master = new \Lan\Speed\Master($connection, $factory);
 $master->setName('master:dispatcher')
-->setMaxCacheMessageCount(2000)
-->setMaxWorkerNum(10)
-->addSignal(SIGINT, function ($signal) use ($master) {
-    $master->stop();
-})->addSignal(SIGTERM, function ($signal) use ($master) {
-    $master->stop();
-})->addSignal(SIGUSR1, function ($signal) use ($master){
-    print_r($master->stat());
-})->on('error', function (\Exception $ex) {
-    var_dump($ex->getMessage());
-})->on('workerExit', function ($pid, $master) {
-    echo 'worker ', $pid, ' exit!!!', PHP_EOL;
-});
+    ->setMaxCacheMessageCount(2000)
+    ->setMaxWorkerNum(10)
+    ->addSignal(SIGINT, function ($signal) use ($master) {
+        $master->stop();
+    })->addSignal(SIGTERM, function ($signal) use ($master) {
+        $master->stop();
+    })->addSignal(SIGUSR1, function ($signal) use ($master){
+        // TODO 监听信号
+        var_dump($master->stat());
+    })->on('error', function (\Exception $ex) {
+        // TODO 去处理异常
+    })->on('workerExit', function ($pid, $master) {
+        echo 'worker ', $pid, ' exit!!!', PHP_EOL;
+    });
 
-$master->run();
+    $master->run();
+
+
