@@ -29,7 +29,7 @@ class Worker extends Process
      * 子进程阻塞时间
      * @var int
      */
-    private $blockPeriod = 60;
+    private $blockPeriod = 1;
 
     /**
      * 监控进程是否达到最大空闲时间
@@ -158,6 +158,7 @@ class Worker extends Process
         $this->emit('start', [$this]);
 
         $this->updateMonitorTimer();
+
         while ($this->state != self::STATE_SHUTDOWN) {
             $this->getEventLoop()->addTimer($this->blockPeriod, function ($timer) {
                 $this->getEventLoop()->stop();
@@ -176,7 +177,7 @@ class Worker extends Process
             }
         }
 
-        $this->communication->end();
+        //$this->communication->end();
         $this->removeEventLoop();
         $this->emit('end', [$this]);
         exit(0);
@@ -186,6 +187,10 @@ class Worker extends Process
     public function stop() {
         $this->cancelMonitorTimer();
         $this->eventLoop->stop();
+    }
+
+    public function stopBySignal() {
+
     }
 
     /**

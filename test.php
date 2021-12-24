@@ -23,7 +23,7 @@ $factory = new \Lan\Speed\WorkerFactory();
 
 $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
     $worker->setName('worker:consumer:' . $worker->getPid());
-    $worker->setMaxFreeTime(15);
+    $worker->setMaxFreeTime(5);
 })->registerEvent('end', function (\Lan\Speed\Worker $worker) {
 //    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
 //        'pid' => $worker->getPid()
@@ -35,25 +35,34 @@ $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
     $body['pid'] = $worker->getPid();
 
     //file_put_contents('consumed.log', json_encode($body).PHP_EOL, FILE_APPEND);
+})->registerEvent('disconnect', function () {
+
 });
 
-$master = new \Lan\Speed\Master($connection, $factory);
-$master->setName('master:dispatcher')
-    ->setMaxCacheMessageCount(2000)
-    ->setMaxWorkerNum(10)
-    ->addSignal(SIGINT, function ($signal) use ($master) {
-        $master->stop();
-    })->addSignal(SIGTERM, function ($signal) use ($master) {
-        $master->stop();
-    })->addSignal(SIGUSR1, function ($signal) use ($master){
-        // TODO 监听信号
-        var_dump($master->stat());
-    })->on('error', function (\Exception $ex) {
-        // TODO 去处理异常
-    })->on('workerExit', function ($pid, $master) {
-        echo 'worker ', $pid, ' exit!!!', PHP_EOL;
-    });
+try {
+    $master = new \Lan\Speed\Master($connection, $factory);
 
-    $master->run();
+    $master->setName('master:dispatcher')
+        ->setMaxCacheMessageCount(2000)
+        ->setMaxWorkerNum(5)
+        ->addSignal(SIGINT, function ($signal) use ($master) {
+            $master->stop();
+        })->addSignal(SIGTERM, function ($signal) use ($master) {
+            $master->stop();
+        })->addSignal(SIGUSR1, function ($signal) use ($master){
+            // TODO 监听信号
+            var_dump($master->stat());
+        })->on('error', function (\Exception $ex) {
+            var_dump($ex->getMessage(), $ex->getTraceAsString());
+        })->on('workerExit', function ($pid, $master) {
+            echo 'worker ', $pid, ' exit!!!', PHP_EOL;
+        });
+
+    $master->run(false);
+} catch (\Exception $ex) {
+    var_dump($ex->getMessage(), $ex->getTraceAsString());
+}
+
+
 
 

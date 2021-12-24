@@ -40,8 +40,8 @@ function GetRandStr($length){
 
 $isEnd = false;
 while (!$isEnd) {
-    $rand = mt_rand(1, 3);
-    for ($i = 0; $i < $rand; $i++) {
+    $rand = mt_rand(1, 300);
+    for ($i = 0; $i < 500; $i++) {
         try {
             //$channel->publish(GetRandStr(12), [], '', 'hello');
             $channel->publish(GetRandStr(1000), [], 'fanout_ex');

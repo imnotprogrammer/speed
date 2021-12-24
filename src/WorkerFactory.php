@@ -29,7 +29,7 @@ class WorkerFactory
         });
 
         $worker->addSignal(SIGTERM, function ($signal) use ($worker) {
-            $worker->stop();
+            $worker->stopBySignal();
         });
 
         if ($this->signalHandlers) {

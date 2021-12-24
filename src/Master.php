@@ -110,7 +110,7 @@ class Master extends Process implements HandlerInterface
         $this->scheduleWorker = new ScheduleWorker();
         $this->stashMessage = new \SplDoublyLinkedList();
         parent::__construct();
-        $this->init();
+       // $this->init();
     }
 
     /**
@@ -149,13 +149,14 @@ class Master extends Process implements HandlerInterface
 
     private function init() {
         $this->addSignal(SIGCHLD, function ($signal)  {
-            while ($pid = pcntl_wait($status, WNOHANG)) {
-                $this->removeWorker($pid);
-                if (count($this->getWorkers()) <= 0) {
-                    break;
-                }
-            }
+            $this->waitChildrenExit();
         });
+    }
+
+    public function waitChildrenExit() {
+        while (($pid = pcntl_wait($status, WNOHANG)) > 0) {
+            $this->removeWorker($pid);
+        }
     }
 
     /**
@@ -202,19 +203,10 @@ class Master extends Process implements HandlerInterface
      * @param int $pid
      */
     public function removeWorker($pid = 0) {
-        if ($pid) {
-            if (isset($this->workers[$pid])) {
-                unset($this->workers[$pid]['stream']);
-                unset($this->workers[$pid]);
-                $this->scheduleWorker->retireWorker($pid);
-                $this->emit('workerExit', [$pid, $this]);
-            }
-        } else {
-            foreach ($this->workers as $pid => $worker) {
-                unset($worker['stream']);
-                unset($this->workers[$pid]);
-                $this->scheduleWorker->retireWorker($pid);
-            }
+        if (isset($this->workers[$pid])) {
+            unset($this->workers[$pid]);
+            $this->scheduleWorker->retireWorker($pid);
+            $this->emit('workerExit', [$pid, $this]);
         }
     }
 
@@ -242,7 +234,8 @@ class Master extends Process implements HandlerInterface
         if ($pid > 0) { // 父进程
             fclose($sockets[0]);
             unset($sockets[0]);
-            $stream = new Stream($sockets[1], $this->getEventLoop());
+
+            $stream = new Stream($sockets[1], $this->eventLoop);
             $stream->on('data', [$this, 'receive']);
             $stream->on('error', function ($error, $stream) {
                 $this->emit('error', [$error, $stream]);
@@ -251,6 +244,9 @@ class Master extends Process implements HandlerInterface
             $stream->on('close', function ($stream) use ($pid) {
                 // 告诉相应子进程，由于父进程与子进程通信通道被关闭，现在需要停止运行子进程
                 //$this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
+                if (isset($this->workers[$pid])) {
+                    posix_kill($pid, SIGTERM);
+                }
             });
 
             $this->workers[$pid]['stream'] = $stream;
@@ -299,13 +295,15 @@ class Master extends Process implements HandlerInterface
             return;
         }
 
-       $this->emit('start', [$this]);
+        $this->init();
+        $this->emit('start', [$this]);
+
         $this->connection->setPrefetchCount(10)
             ->setMessageHandler($this)
             ->connect($this->eventLoop)->then()
             ->then(null, function ($reason) {
-                $this->emit('error', [$reason]);
-                $this->state = self::STATE_SHUTDOWN;
+                $this->stop();
+                throw $reason;
             });
 
         while ($this->state == self::STATE_RUNNING) {
@@ -314,6 +312,8 @@ class Master extends Process implements HandlerInterface
             } catch (\Exception $ex) {
                 $this->eventLoop->stop();
                 $this->emit('error', [$ex]);
+            } finally {
+                $this->waitChildrenExit();
             }
 
             $this->emit('patrolling', [$this]);
@@ -337,15 +337,12 @@ class Master extends Process implements HandlerInterface
         if ($this->state == self::STATE_SHUTDOWN) {
             foreach ($this->workers as $pid => $worker) {
                 // 安全退出
-
                 $this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
             }
 
             while (count($this->workers) > 0) {
                 $this->loop(0.1);//阻塞100毫秒，等待子进程退出
             }
-
-            $this->cancelProcessTimer();
         }
     }
 
@@ -383,8 +380,8 @@ class Master extends Process implements HandlerInterface
     public function loop($period) {
         if ($period) {
             $this->processTimer = $this->eventLoop->addTimer($period, function ($timer) {
+                $this->cancelProcessTimer();
                 $this->eventLoop->stop();
-                $this->processTimer = null;
             });
         }
 
@@ -403,11 +400,14 @@ class Master extends Process implements HandlerInterface
             return;
         }
 
-        $this->connection->disconnect()->then(function () {
-            $this->state = self::STATE_FLUSH_CACHE;
-            $this->cancelProcessTimer();
-            $this->eventLoop->stop();
-        });
+        if ($this->connection->isConnected()) {
+            $this->connection->disconnect()->then(function () {
+                $this->state = self::STATE_FLUSH_CACHE;
+                $this->cancelProcessTimer();
+                $this->eventLoop->stop();
+            });
+        }
+
     }
 
     /**
