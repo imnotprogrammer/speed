@@ -8,6 +8,7 @@ use Lan\Speed\BunnyClient as Client;
 use Bunny\Channel;
 use Lan\Speed\Exception\ConnectException;
 use Lan\Speed\Exception\ConsumeQueuesException;
+use Lan\Speed\Impl\HandlerInterface;
 use React\EventLoop\LoopInterface;
 use React\Promise\PromiseInterface;
 use function React\Promise\all;
@@ -135,10 +136,22 @@ class Connection
             return resolve();
         }
 
-        return $this->client->disconnect()->then(function () {
-            $this->state = self::STATE_DISCONNECTED;
-            $this->client = null;
-        });
+        if ($this->channel) {
+            return $this->channel->close()->then(function () {
+                $this->channel = null;
+                if ($this->client) {
+                    return $this->client->disconnect()->then(function () {
+                        $this->state = self::STATE_DISCONNECTED;
+                        $this->client = null;
+                        return resolve();
+                    });
+                } else {
+                    return resolve();
+                }
+            });
+        }
+
+        return resolve();
     }
 
     /**
@@ -168,7 +181,6 @@ class Connection
                 if ($this->needResume) {
                     return $this->resume();
                 }
-
             }, function ($ex) {
                 // 连接失败
                 if ($this->client->isConnected()) {
@@ -236,13 +248,12 @@ class Connection
         }
 
         foreach ($this->queues as $queue => $handler) {
-            $promise[] = $channel->consume($handler, $queue)
-                ->then(null, function ($ex) {
-                    return reject($ex);
-                });
+            $promise[] = $channel->consume($handler, $queue);
         }
 
-        return all($promise);
+        return all($promise)->then(null, function ($ex) {
+            var_dump($ex->getMessage());
+        });
     }
 
     public function setPrefetchCount($count = 1) {

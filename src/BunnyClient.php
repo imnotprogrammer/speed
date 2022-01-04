@@ -9,6 +9,7 @@ use Bunny\ClientStateEnum;
 use Bunny\Exception\ClientException;
 use function React\Promise\all;
 use function React\Promise\reject;
+use function React\Promise\resolve;
 
 class BunnyClient extends Client
 {
@@ -21,7 +22,7 @@ class BunnyClient extends Client
     public function disconnect($replyCode = 0, $replyText = "")
     {
         if ($this->state === ClientStateEnum::DISCONNECTING) {
-            return $this->disconnectPromise;
+            return resolve();
         }
 
         if ($this->state !== ClientStateEnum::CONNECTED) {
@@ -31,7 +32,6 @@ class BunnyClient extends Client
         $this->state = ClientStateEnum::DISCONNECTING;
 
         $promises = [];
-
         if ($replyCode === 0) {
             foreach ($this->channels as $channel) {
                 $promises[] = $channel->close($replyCode, $replyText);

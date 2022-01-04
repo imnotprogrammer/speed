@@ -5,11 +5,11 @@ namespace Lan\Speed;
 
 
 use Lan\Speed\Exception\MessageFormatExcetion;
-use Lan\Speed\Impl\Message;
+use Lan\Speed\Impl\MessageInterface;
+use React\EventLoop\Timer\Timer;
 
 class Worker extends Process
 {
-
     const STATE_READING_EXIT = 3;
 
     /** @var Stream $communication */
@@ -43,6 +43,11 @@ class Worker extends Process
     private $statistics = array();
 
     /**
+     * @var Timer $processTimer 定时器
+     */
+    private $processTimer = null;
+
+    /**
      * @return int
      */
     public function getMaxFreeTime()
@@ -64,9 +69,10 @@ class Worker extends Process
         $this->setPid(posix_getpid());
 
         $this->communication = new Stream($stream, $this->getEventLoop());
-        $this->communication->on('data', [$this, 'receiveMessage']);
+        $this->communication->on('data', [$this->communication, 'baseRead']);
+        $this->communication->on('message', [$this, 'receiveMessage']);
         $this->communication->on('error', function (\Exception $error, Stream $stream) {
-            $this->emit('error', [$error, $stream]);
+            $this->emit('error', [$error, $this]);
         });
     }
 
@@ -77,37 +83,42 @@ class Worker extends Process
      */
     public function handleMessage(MessageInterface $message)
     {
-        // 有消息处理，则需要重新更新定时器时间，避免因空闲而发送退出进程消息
-        $this->cancelMonitorTimer();
-        switch ($message->getAction()) {
-            // 处理主进程派发的任务消息，的处理逻辑交给给worker监听的message事件处理
-            case MessageAction::MESSAGE_CONSUME:
-                $this->emit('message', [$this, $message]);
-                $this->sendMessage(new Message(MessageAction::MESSAGE_FINISHED, [
-                    'pid' => $this->getPid(),
-                ]));
-                // 不在处理消息
-                if ($this->state == self::STATE_READING_EXIT) {
-                    $this->sendReadyExitMessage();
-                }
-                break;
-            // 主进程已经收到了子进程的消息，并且已经准备好，这里会发送回执消息
-            case MessageAction::MESSAGE_LAST:
-                $this->sendMessage(new Message(MessageAction::MESSAGE_QUIT_ME, [
-                    'pid' => $this->getPid()
-                ]));
-                break;
-            case MessageAction::MESSAGE_YOU_EXIT:
-                $this->state = self::STATE_SHUTDOWN;
-                $this->stop();
-                return;
-                break;
-            case MessageAction::MESSAGE_CUSTOM:
-            default:
+        try {
+            // 有消息处理，则需要重新更新定时器时间，避免因空闲而发送退出进程消息
+            $this->cancelMonitorTimer();
+            switch ($message->getAction()) {
+                // 处理主进程派发的任务消息，的处理逻辑交给给worker监听的message事件处理
+                case MessageAction::MESSAGE_CONSUME:
+                    $this->emit('message', [$this, $message]);
+                    $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_FINISHED, [
+                        'pid' => $this->getPid(),
+                    ]));
+                    // 不在处理消息
+                    if ($this->state == self::STATE_READING_EXIT) {
+                        $this->sendReadyExitMessage();
+                    }
+                    break;
+                // 主进程已经收到了子进程的消息，并且已经准备好，这里会发送回执消息
+                case MessageAction::MESSAGE_LAST:
+                    $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_QUIT_ME, [
+                        'pid' => $this->getPid()
+                    ]));
+                    break;
+                case MessageAction::MESSAGE_YOU_EXIT:
+                    $this->stop();
+                    return;
+                    break;
+                case MessageAction::MESSAGE_CUSTOM:
+                default:
+            }
+            // 重新更新定时器
+            $this->updateMonitorTimer();
+        } catch (\Exception $ex) {
+            $this->emit('error', [$ex]);
         }
 
-        // 重新更新定时器
-        $this->updateMonitorTimer();
+
+
     }
 
     /**
@@ -121,7 +132,12 @@ class Worker extends Process
 
         $this->monitorTimer = $this->getEventLoop()->addTimer($this->maxFreeTime, function ($timer) {
             // 进程准备退出
-            $this->sendReadyExitMessage();
+            try {
+                $this->sendReadyExitMessage();
+            } catch (\Exception $ex) {
+                $this->emit('error', [$ex]);
+            }
+
         });
     }
 
@@ -133,9 +149,8 @@ class Worker extends Process
             return;
         }
 
-        $this->getEventLoop()->cancelTimer($this->monitorTimer);
+        $this->eventLoop->cancelTimer($this->monitorTimer);
         $this->monitorTimer = null;
-        $this->state = self::STATE_RUNNING;
     }
 
     /**
@@ -143,9 +158,11 @@ class Worker extends Process
      * 两种情况，
      * case1: 进程空闲超过最大空闲时间限制
      * case2: 进程已经达到退休(进程最大运行时间)
+     * @throws \Exception
      */
     public function sendReadyExitMessage() {
-        $this->sendMessage(new Message(MessageAction::MESSAGE_READY_EXIT, [
+
+        $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_READY_EXIT, [
             'pid' => $this->getPid()
         ]));
     }
@@ -160,14 +177,14 @@ class Worker extends Process
         $this->updateMonitorTimer();
 
         while ($this->state != self::STATE_SHUTDOWN) {
-            $this->getEventLoop()->addTimer($this->blockPeriod, function ($timer) {
-                $this->getEventLoop()->stop();
+            $this->processTimer = $this->eventLoop->addTimer($this->blockPeriod, function ($timer) {
+                $this->cancelProcessTimer();
+                $this->eventLoop->stop();
             });
 
             try {
-                $this->getEventLoop()->run();
+                $this->eventLoop->run();
             } catch (\Exception $ex) {
-                $this->getEventLoop()->stop();
                 $this->emit('error', [$ex, $this]);
             }
 
@@ -178,19 +195,29 @@ class Worker extends Process
         }
 
         //$this->communication->end();
-        $this->removeEventLoop();
+        //$this->removeEventLoop();
         $this->emit('end', [$this]);
         exit(0);
     }
 
-
+    /**
+     * 进程停止
+     */
     public function stop() {
+        $this->state = self::STATE_SHUTDOWN;
         $this->cancelMonitorTimer();
+        $this->cancelProcessTimer();
         $this->eventLoop->stop();
     }
 
-    public function stopBySignal() {
-
+    /**
+     * 取消阻塞定时器
+     */
+    public function cancelProcessTimer() {
+        if ($this->processTimer) {
+            $this->eventLoop->cancelTimer($this->processTimer);
+            $this->processTimer = null;
+        }
     }
 
     /**
@@ -199,7 +226,11 @@ class Worker extends Process
      */
     public function sendMessage(MessageInterface $message) {
         if ($this->communication && $this->communication->isWritable()) {
-            $this->communication->write(serialize($message));
+            file_put_contents('worker.log', $this->getPid().serialize($message).PHP_EOL, FILE_APPEND);
+            $this->communication->baseWrite(serialize($message));
+        } else {
+            echo sprintf('%s send exit message failed!!! '.PHP_EOL, $this->getPid());
+            throw new \Exception($this->getPid() . 'socket channel closed');
         }
     }
 
@@ -212,7 +243,7 @@ class Worker extends Process
     public function receiveMessage($content, Stream $stream) {
         /** @var MessageInterface $message */
         $message = unserialize($content);
-
+        file_put_contents('receive.log', $this->getPid().$content.PHP_EOL, FILE_APPEND);
         if ($message instanceof MessageInterface) {
             $this->handleMessage($message);
         } else if (is_string($message)) {

@@ -4,6 +4,7 @@
 namespace Lan\Speed;
 
 use Evenement\EventEmitter;
+use Lan\Speed\Impl\MessageInterface;
 use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
 
@@ -17,6 +18,9 @@ abstract class Process extends EventEmitter
 
     /** @var int 进程空闲状态， */
     const STATE_FREE = 2;
+
+    /** @var int 清除缓存状态信息 */
+    const STATE_FLUSH_CACHE = 3;
 
     /** @var LoopInterface $eventLoop 事件处理器 */
     protected $eventLoop;
@@ -57,6 +61,9 @@ abstract class Process extends EventEmitter
         return $this;
     }
 
+    /**
+     * 移除所有信号
+     */
     public function removeAllSignal() {
         foreach ($this->signalHandlers as $signal => $handlers) {
             foreach ($handlers as $handle) {
@@ -106,7 +113,7 @@ abstract class Process extends EventEmitter
         return $this->eventLoop;
     }
 
-    public function removeEventLoop() {
-        unset($this->eventLoop);
+    public function getSignalHandler() {
+        return $this->signalHandlers;
     }
 }

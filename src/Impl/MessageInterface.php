@@ -1,7 +1,7 @@
 <?php
 
 
-namespace Lan\Speed;
+namespace Lan\Speed\Impl;
 
 
 interface MessageInterface

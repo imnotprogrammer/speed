@@ -51,7 +51,6 @@ class ScheduleWorker
         for ($i = 0; $i < self::TRY_ALLOCATE_NUMS; $i++) {
             foreach ($this->workerInfo as $pid => $state) {
                 if ($state == self::WORKER_STATE_FREE) {
-                    $this->workerAllocate($pid);
                     return $pid;
                 }
             }
@@ -71,6 +70,24 @@ class ScheduleWorker
      * @param $status
      */
     public function updateWorker($workerPID, $status) {
+        $currentState = isset($this->workerInfo[$workerPID]) ?
+            $this->workerInfo[$workerPID] : self::WORKER_STATE_NOT_EXIST;
+
+        switch ($status) {
+            case self::WORKER_STATE_IGNORE:
+            case self::WORKER_STATE_FREE:
+                if ($currentState == self::WORKER_STATE_BUSY || $currentState == self::WORKER_STATE_NOT_EXIST) {
+                    $this->freeCount++;
+                }
+                break;
+            case self::WORKER_STATE_BUSY:
+                if ($currentState == self::WORKER_STATE_FREE) {
+                    $this->freeCount--;
+                }
+                break;
+            default: break;
+        }
+
         $this->workerInfo[$workerPID] = $status;
     }
 
@@ -79,13 +96,6 @@ class ScheduleWorker
      * @param $workerPID
      */
     public function workerFree($workerPID) {
-
-        $currentStatus = $this->workerInfo[$workerPID];
-        if ($currentStatus != self::WORKER_STATE_BUSY) {
-            return;
-        }
-
-        $this->incr(self::WORKER_FREE);
         $this->updateWorker($workerPID, self::WORKER_STATE_FREE);
     }
 
@@ -94,80 +104,7 @@ class ScheduleWorker
      * @param $workerPID
      */
     public function workerBusy($workerPID) {
-        //$this->decr();
         $this->updateWorker($workerPID, self::WORKER_STATE_BUSY);
-    }
-
-    /**
-     * 将进程指向已分配状态，不然该进程被多次分配
-     * @param $workerPID
-     */
-    public function workerAllocate($workerPID) {
-        $currentStatus = $this->workerInfo[$workerPID];
-        if ($currentStatus != self::WORKER_STATE_FREE) {
-            return;
-        }
-
-        $this->decr();
-        $this->updateWorker($workerPID, self::WORKER_STATE_ALLOCATE);
-    }
-
-    /**
-     * 销毁退出的或僵尸进程信息，避免被分配到任务
-     * @param $workerPID
-     */
-    public function destroy($workerPID) {
-        if (isset($this->workerInfo[$workerPID])) {
-            $state = $this->workerInfo[$workerPID];
-            if ($state == self::WORKER_STATE_FREE) {
-                $this->decr();
-            } else {
-                $this->decr(self::WORKER_BUSY);
-            }
-
-            unset($this->workerInfo[$workerPID]);
-        }
-
-    }
-
-    public function getWorkerInfo() {
-        return $this->workerInfo;
-    }
-
-    /**
-     * 增加空闲/繁忙进程数
-     * @param string $type 状态标识
-     */
-    public function incr($type = self::WORKER_FREE) {
-        switch ($type) {
-            case self::WORKER_BUSY:
-                $this->busyCount++;
-                break;
-            case self::WORKER_FREE:
-                $this->freeCount++;
-                break;
-            default:
-                break;
-        }
-    }
-
-    /**
-     * 减少空闲/繁忙进程
-     * @param string $type 状态标识
-     */
-    public function decr($type = self::WORKER_FREE) {
-        switch ($type) {
-            case self::WORKER_BUSY:
-                $this->busyCount--;
-                $this->busyCount = $this->busyCount >= 0 ? $this->busyCount : 0;
-                break;
-            case self::WORKER_FREE:
-                $this->freeCount--;
-                $this->freeCount = $this->freeCount >= 0 ? $this->freeCount : 0;
-                break;
-            default:
-                break;
-        }
     }
 
     /**
@@ -175,15 +112,7 @@ class ScheduleWorker
      * @param $workerPid
      */
     public function retireWorker($workerPid) {
-        if (isset($this->workerInfo[$workerPid])) {
-            $status = $this->workerInfo[$workerPid];
-            if ($status == self::WORKER_STATE_BUSY) {
-                $this->decr(self::WORKER_BUSY);
-            } else if ($status == self::WORKER_STATE_FREE) {
-                $this->decr();
-            }
-            $this->workerInfo[$workerPid] = self::WORKER_STATE_IGNORE;
-        }
+        $this->updateWorker($workerPid, self::WORKER_STATE_IGNORE);
     }
 
     public function getFreeWorker() {

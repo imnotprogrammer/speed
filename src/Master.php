@@ -4,14 +4,17 @@
 namespace Lan\Speed;
 
 use Bunny\Channel;
+use Bunny\Exception\ClientException;
 use Bunny\Message;
 use Lan\Speed\Exception\DaemonException;
 use Lan\Speed\Exception\MessageFormatExcetion;
 use Lan\Speed\Exception\SocketCreateException;
 use Lan\Speed\Exception\SocketWriteException;
 use Lan\Speed\Exception\WorkerCreateException;
+use Lan\Speed\Impl\HandlerInterface;
+use Lan\Speed\Impl\MessageInterface;
+use React\EventLoop\Factory;
 use React\Promise\Promise;
-use function React\Promise\reject;
 
 
 /**
@@ -22,9 +25,6 @@ use function React\Promise\reject;
  */
 class Master extends Process implements HandlerInterface
 {
-    /** @var int 清除缓存状态信息 */
-    const STATE_FLUSH_CACHE = 3;
-
     /** @var WorkerFactory  进程创建工厂 */
     private $workerFactory;
 
@@ -98,6 +98,10 @@ class Master extends Process implements HandlerInterface
     private $processTimer = null;
 
 
+    private $daemon = false;
+
+    private $logger = null;
+
     /**
      * Master constructor.
      * @param Connection $connection
@@ -110,7 +114,6 @@ class Master extends Process implements HandlerInterface
         $this->scheduleWorker = new ScheduleWorker();
         $this->stashMessage = new \SplDoublyLinkedList();
         parent::__construct();
-       // $this->init();
     }
 
     /**
@@ -185,11 +188,11 @@ class Master extends Process implements HandlerInterface
             // 子进程准备退出
             case MessageAction::MESSAGE_READY_EXIT:
                 $this->scheduleWorker->retireWorker($body['pid']);
-                $this->sendMessage($body['pid'], new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
+                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_LAST));
                 break;
             // 子进程已经准备好了，发送此消息
             case MessageAction::MESSAGE_QUIT_ME:
-                $this->sendMessage($body['pid'], new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_YOU_EXIT));
+                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_YOU_EXIT));
                 break;
             case MessageAction::MESSAGE_CUSTOM:
                 //TODO 自定义消息处理
@@ -204,12 +207,20 @@ class Master extends Process implements HandlerInterface
      */
     public function removeWorker($pid = 0) {
         if (isset($this->workers[$pid])) {
+            if (isset($this->workers[$pid]['stream'])) {
+                $this->workers[$pid]['stream']->end();
+                return;
+            }
+
             unset($this->workers[$pid]);
             $this->scheduleWorker->retireWorker($pid);
             $this->emit('workerExit', [$pid, $this]);
         }
     }
 
+    /**
+     * @return bool
+     */
     public function isMaxLimit() {
         if ($this->maxWorkerNum < 0) {
             return false;
@@ -236,36 +247,44 @@ class Master extends Process implements HandlerInterface
             unset($sockets[0]);
 
             $stream = new Stream($sockets[1], $this->eventLoop);
-            $stream->on('data', [$this, 'receive']);
+            $stream->on('data', array($stream, 'baseRead'));
+            $stream->on('message', array($this, 'onReceive'));
             $stream->on('error', function ($error, $stream) {
-                $this->emit('error', [$error, $stream]);
+                //$this->emit('error', array($error, $stream));
+                throw new SocketWriteException($error->getMessage());
             });
 
             $stream->on('close', function ($stream) use ($pid) {
-                // 告诉相应子进程，由于父进程与子进程通信通道被关闭，现在需要停止运行子进程
-                //$this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
-                if (isset($this->workers[$pid])) {
-                    posix_kill($pid, SIGTERM);
-                }
+                 if (!isset($this->workers[$pid])) {
+                     return;
+                 }
+
+                 unset($this->workers[$pid]);
+                 $this->scheduleWorker->retireWorker($pid);
+                 $this->emit('workerExit', array($pid, $this));
             });
 
             $this->workers[$pid]['stream'] = $stream;
             $this->statistics[$pid] = $this->initStatistics();
 
         } else if ($pid == 0) {
-            fclose($sockets[1]);
-            unset($sockets[1]);
-            unset($this->stashMessage);
-            unset($this->scheduleWorker);
-            unset($this->statistics);
-
             $this->cancelProcessTimer();
             $this->removeAllListeners();
             $this->removeAllSignal();
-            //$this->removeWorker();
 
-            unset($this->eventLoop);
-            unset($this->workers);
+
+//            foreach ($this->workers as $worker) {
+//                if (isset($worker['stream']) && !empty($worker['stream'])) {
+//                    $worker['stream']->end();
+//                }
+//            }
+
+            fclose($sockets[1]);
+
+            unset(
+                $sockets[1], $this->eventLoop, $this->statistics,
+                $this->stashMessage, $this->scheduleWorker
+            );
 
             $worker = $this->workerFactory->makeWorker($sockets[0]);
             $worker->run();
@@ -274,6 +293,7 @@ class Master extends Process implements HandlerInterface
             throw new WorkerCreateException();
         }
 
+        $this->scheduleWorker->workerFree($pid);
         return $pid;
     }
 
@@ -283,37 +303,43 @@ class Master extends Process implements HandlerInterface
      * @param bool $daemon
      * @throws DaemonException
      * @throws WorkerCreateException
+     * @throws SocketCreateException
+     * @throws SocketWriteException
      */
     public function run($daemon = true) {
         if ($daemon) {
+            $this->daemon = true;
             $this->daemon();
         }
 
-        $this->state = self::STATE_RUNNING;
-
         if (!$this->eventLoop) {
-            return;
+           $this->eventLoop = Factory::create();
         }
 
         $this->init();
         $this->emit('start', [$this]);
 
-        $this->connection->setPrefetchCount(10)
+        $this->state = self::STATE_RUNNING;
+        $this->connection->setPrefetchCount()
             ->setMessageHandler($this)
-            ->connect($this->eventLoop)->then()
-            ->then(null, function ($reason) {
+            ->connect($this->eventLoop)
+            ->then(function () {
+                $this->state = self::STATE_RUNNING;
+            }, function ($reason) {
+                $this->emit('error', [$reason]);
                 $this->stop();
-                throw $reason;
             });
+
 
         while ($this->state == self::STATE_RUNNING) {
             try {
                 $this->loop($this->blockTime);
             } catch (\Exception $ex) {
-                $this->eventLoop->stop();
+                if ($ex instanceof ClientException) {
+                    $this->stop();
+                    break;
+                }
                 $this->emit('error', [$ex]);
-            } finally {
-                $this->waitChildrenExit();
             }
 
             $this->emit('patrolling', [$this]);
@@ -334,43 +360,63 @@ class Master extends Process implements HandlerInterface
      * @throws SocketWriteException
      */
     public function clearWorkers() {
-        if ($this->state == self::STATE_SHUTDOWN) {
+        $readyCount = 3;
+
+        while ($readyCount > 0) {
             foreach ($this->workers as $pid => $worker) {
-                // 安全退出
-                $this->sendMessage($pid, new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_LAST));
+                $this->sendMessage($pid, new \Lan\Speed\Message(MessageAction::MESSAGE_LAST));
             }
 
-            while (count($this->workers) > 0) {
-                $this->loop(0.1);//阻塞100毫秒，等待子进程退出
+            $this->loop(0.4);//阻塞1秒，等待子进程退出
+            $this->waitChildrenExit();
+            $readyCount--;
+            if (count($this->workers) <= 0) {
+                $this->state = self::STATE_SHUTDOWN;
+                break;
             }
         }
+
+        file_put_contents('stat.log', date('Y-m-d H:i:s', time()) . var_export($this->stat(), true) .PHP_EOL, FILE_APPEND);
+
     }
 
     /**
      * 将缓存消息情况，清空之前需要先把缓存的消息处理完毕
-     * @throws SocketCreateException
-     * @throws WorkerCreateException
      */
     public function flushCacheMessage() {
-        $this->printAlertMessage();
-        while ($this->state == self::STATE_FLUSH_CACHE
-            && $this->stashMessage->count() > 0
-        ) {
+        if (count($this->stashMessage) <= 0) {
+            return;
+        }
+
+        $alertMessage = <<<EOT
+Have some task in the cache, need to process. message count: {$this->stashMessage->count()}. it will take some time,please waiting...\n
+EOT;
+
+        $this->safeEcho($alertMessage);
+
+        while ($this->state == self::STATE_FLUSH_CACHE && $this->stashMessage->count() > 0) {
             while ($this->scheduleWorker->hasAvailableWorker()) {
                 $this->dispatchCacheMessage();
             }
 
             $this->loop(0.5);
         }
-        $this->state = self::STATE_SHUTDOWN;
     }
 
-    public function printAlertMessage() {
-        echo $this->getAlertMessage();
-    }
-
-    public function getAlertMessage() {
-        return sprintf("message have some cache, need to process. message count: %s. it will take some time,please waiting...\n", count($this->stashMessage));
+    /**
+     * 安全打印信息
+     * @param $message
+     */
+    public function safeEcho($message) {
+        if ($this->daemon) {
+            if ($this->logger) {
+                $this->logger->info($message);
+            } else {
+                fwrite(STDOUT, $message);
+            }
+        } else {
+            fwrite(STDOUT, $message . PHP_EOL);
+        }
     }
 
     /**
@@ -380,16 +426,16 @@ class Master extends Process implements HandlerInterface
     public function loop($period) {
         if ($period) {
             $this->processTimer = $this->eventLoop->addTimer($period, function ($timer) {
-                $this->cancelProcessTimer();
-                $this->eventLoop->stop();
+                $this->stopLoop();
             });
         }
 
-        try {
-            $this->eventLoop->run();
-        } catch (\Exception $ex) {
-            $this->emit('error', [$ex]);
-        }
+        $this->eventLoop->run();
+    }
+
+    public function stopLoop() {
+        $this->cancelProcessTimer();
+        $this->eventLoop->stop();
     }
 
     /**
@@ -400,14 +446,19 @@ class Master extends Process implements HandlerInterface
             return;
         }
 
+        /**
+         * 如果当前连接已经打开，则需要关闭连接，然后终止程序
+         */
         if ($this->connection->isConnected()) {
             $this->connection->disconnect()->then(function () {
                 $this->state = self::STATE_FLUSH_CACHE;
-                $this->cancelProcessTimer();
-                $this->eventLoop->stop();
+                $this->stopLoop();
             });
+        } else {
+            // broker连接已经关闭， 则直接终止事件循环
+            $this->state = self::STATE_FLUSH_CACHE;
+            $this->stopLoop();
         }
-
     }
 
     /**
@@ -429,19 +480,29 @@ class Master extends Process implements HandlerInterface
      */
     public function dispatch(MessageInterface $message) {
         $workerPid = $this->scheduleWorker->allocate();
-        if ($workerPid) {
-            $this->sendMessage($workerPid, $message);
-        } else if (count($this->workers) < $this->maxWorkerNum) {
+        if (!$workerPid && $this->getWorkerCount() < $this->maxWorkerNum) {
             $workerPid = $this->createWorker();
-            $this->scheduleWorker->workerFree($workerPid);
-            $this->scheduleWorker->workerAllocate($workerPid);
-            $this->sendMessage($workerPid, $message);
         }
+
+        if (!$workerPid) {
+            $this->cacheMessage($message);
+            return;
+        }
+
+        $this->scheduleWorker->workerBusy($workerPid);
+        try {
+            $this->sendMessage($workerPid, $message);
+        } catch (\Exception $ex) {
+            if ($ex instanceof SocketWriteException) {
+                $this->cacheMessage($message);
+            }
+            $this->emit('error', array($ex));
+        }
+
     }
 
     /**
-     * @throws SocketCreateException
-     * @throws WorkerCreateException
+     * 派发缓存消息
      */
     public function dispatchCacheMessage() {
         if (!$this->scheduleWorker->hasAvailableWorker()) {
@@ -458,23 +519,15 @@ class Master extends Process implements HandlerInterface
                 $this->emit('error', [$ex]);
             }
 
-        } else if ($this->state == self::STATE_RUNNING) {
+        } else if ($this->state == self::STATE_RUNNING) { // 如果只是临时断掉连接， 则需要重新开启连接
             if ($this->connection->isConnected()) {
                 $this->connection->resume()->then(null, function ($ex) {
                     $this->emit('error', [$ex]);
                 });
             }
+        } else  if ($this->state == self::STATE_FLUSH_CACHE) {
+            //$this->state = self::STATE_SHUTDOWN;
         }
-    }
-
-   // public function termite
-
-    public function cacheMessage(MessageInterface $message) {
-         $this->stashMessage->push(serialize($message));
-    }
-
-    public function isReachedMaxCahcheCount() {
-        return $this->stashMessage->count() >= $this->maxCacheMessageCount;
     }
 
     /**
@@ -487,6 +540,7 @@ class Master extends Process implements HandlerInterface
             throw new DaemonException();
         }
 
+        umask(0);
         $pid = pcntl_fork();
         if ($pid == -1) {
             throw new WorkerCreateException();
@@ -511,15 +565,16 @@ class Master extends Process implements HandlerInterface
      * 向子进程发送消息
      * @param $workerPid
      * @param MessageInterface $message
+     * @throws SocketWriteException
      */
     public function sendMessage($workerPid, MessageInterface $message) {
         if (isset($this->workers[$workerPid]['stream'])) {
             /** @var Stream $stream */
             $stream = $this->workers[$workerPid]['stream'];
             if ($stream->isWritable()) {
-                $stream->write(serialize($message));
+                $message = serialize($message);
+                $stream->baseWrite($message);
                 $this->statistics[$workerPid]['receiveCount']++;
-                $this->scheduleWorker->workerBusy($workerPid);
             } else {
                 throw new SocketWriteException();
             }
@@ -532,11 +587,12 @@ class Master extends Process implements HandlerInterface
      * @param Stream $stream
      * @throws MessageFormatExcetion
      */
-    public function receive($data, Stream $stream) {
+    public function onReceive($data, Stream $stream) {
         /** @var MessageInterface $message */
+        file_put_contents('response.log', $data.PHP_EOL, FILE_APPEND);
         $message = unserialize($data);
 
-        if ($message instanceof \Lan\Speed\Impl\Message) {
+        if ($message instanceof \Lan\Speed\Message) {
             $this->handleMessage($message);
         } else if (is_string($message)) {
             $message = json_decode($message, true);
@@ -590,7 +646,7 @@ class Master extends Process implements HandlerInterface
                 'queue' => $queue,
             );
 
-            $newMessage = new \Lan\Speed\Impl\Message(MessageAction::MESSAGE_CONSUME, json_encode($messageArr));
+            $newMessage = new \Lan\Speed\Message(MessageAction::MESSAGE_CONSUME, json_encode($messageArr));
             // 子进程数达到最大限制
             $isCache = $this->isMaxLimit() && !$this->scheduleWorker->hasAvailableWorker();
             if ($isCache) {
@@ -606,9 +662,9 @@ class Master extends Process implements HandlerInterface
             $promise =  $channel->ack($message);
 
             // 缓存消息达到最大缓存数量，停止从消息中心broker中派发消息
-            if ($isCache && $this->isReachedMaxCahcheCount()) {
+            if ($isCache && $this->isReachedMaxCacheCount()) {
                 $promise->always(function () {
-                    if ($this->isReachedMaxCahcheCount()) {
+                    if ($this->isReachedMaxCacheCount()) {
                         $this->connection->pause()->then(null, function ($ex) {
                             $this->emit('error', [$ex]);
                         });
@@ -616,10 +672,8 @@ class Master extends Process implements HandlerInterface
                 });
             }
 
-            return $promise;
-
         } catch (\Exception $ex) {
-            return reject($ex);
+            $this->emit('error', [$ex]);
         }
     }
 
@@ -646,5 +700,14 @@ class Master extends Process implements HandlerInterface
             'receiveCount' => 0,
             'consumedCount' => 0
         );
+    }
+
+
+    public function cacheMessage(MessageInterface $message) {
+        $this->stashMessage->push(serialize($message));
+    }
+
+    public function isReachedMaxCacheCount() {
+        return $this->stashMessage->count() >= $this->maxCacheMessageCount;
     }
 }

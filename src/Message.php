@@ -1,10 +1,10 @@
 <?php
 
 
-namespace Lan\Speed\Impl;
+namespace Lan\Speed;
 
 
-class Message implements \Lan\Speed\MessageInterface
+class Message implements \Lan\Speed\Impl\MessageInterface
 {
     private $action;
     private $body = array();

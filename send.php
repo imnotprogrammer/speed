@@ -6,7 +6,7 @@ use Bunny\Client;
 require './vendor/autoload.php';
 
 $client = (new Client([
-    'host' => '192.168.123.167',
+    'host' => '192.168.123.126',
     'vhost' => 'docs',
     'username' => 'rabbitmq_user',
     'password' => '123456'
@@ -45,7 +45,8 @@ while (!$isEnd) {
         try {
             //$channel->publish(GetRandStr(12), [], '', 'hello');
             $channel->publish(GetRandStr(1000), [], 'fanout_ex');
-            $channel->publish(GetRandStr(1000), [], '', 'world');
+            //$channel->publish(GetRandStr(1000), [], '', 'world');
+            $isEnd = true;
         } catch (\Exception $ex) {
             $isEnd = true;
             break;

@@ -25,11 +25,11 @@ class WorkerFactory
     public function makeWorker($socket) {
         $worker = new Worker($socket);
         $worker->addSignal(SIGINT, function ($signal) use ($worker) {
-            $worker->stop();
+            //$worker->stop();
         });
 
         $worker->addSignal(SIGTERM, function ($signal) use ($worker) {
-            $worker->stopBySignal();
+            //$worker->stop();
         });
 
         if ($this->signalHandlers) {
@@ -63,7 +63,7 @@ class WorkerFactory
     public function registerEvent($event, callable $handler) {
         if (isset($this->events[$event])) {
             if (in_array($handler, $this->events[$event])) {
-                return;
+                return $this;
             }
         } else {
             $this->events[$event] = array();
@@ -80,12 +80,13 @@ class WorkerFactory
     public function addSignal($signal, callable $handler) {
         if (isset($this->signalHandlers[$signal])) {
             if (in_array($handler, $this->signalHandlers[$signal])) {
-                return;
+                return $this;
             }
         } else {
             $this->signalHandlers[$signal] = array();
         }
         $this->signalHandlers[$signal][] = $handler;
+        return $this;
     }
 
     /**

@@ -6,7 +6,7 @@ namespace Lan\Speed\Exception;
 class SocketWriteException extends \Exception
 {
     protected $code = 500;
-    protected $message = 'Socket write message Failed';
+    protected $message = 'Socket write message failed';
 
     public function __construct($message = "", $code = 0)
     {
