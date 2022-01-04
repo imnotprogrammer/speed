@@ -226,7 +226,6 @@ class Worker extends Process
      */
     public function sendMessage(MessageInterface $message) {
         if ($this->communication && $this->communication->isWritable()) {
-            file_put_contents('worker.log', $this->getPid().serialize($message).PHP_EOL, FILE_APPEND);
             $this->communication->baseWrite(serialize($message));
         } else {
             echo sprintf('%s send exit message failed!!! '.PHP_EOL, $this->getPid());
@@ -243,7 +242,6 @@ class Worker extends Process
     public function receiveMessage($content, Stream $stream) {
         /** @var MessageInterface $message */
         $message = unserialize($content);
-        file_put_contents('receive.log', $this->getPid().$content.PHP_EOL, FILE_APPEND);
         if ($message instanceof MessageInterface) {
             $this->handleMessage($message);
         } else if (is_string($message)) {

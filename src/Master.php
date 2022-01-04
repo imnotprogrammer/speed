@@ -376,8 +376,6 @@ class Master extends Process implements HandlerInterface
             }
         }
 
-        file_put_contents('stat.log', date('Y-m-d H:i:s', time()) . var_export($this->stat(), true) .PHP_EOL, FILE_APPEND);
-
     }
 
     /**
@@ -589,7 +587,6 @@ EOT;
      */
     public function onReceive($data, Stream $stream) {
         /** @var MessageInterface $message */
-        file_put_contents('response.log', $data.PHP_EOL, FILE_APPEND);
         $message = unserialize($data);
 
         if ($message instanceof \Lan\Speed\Message) {
