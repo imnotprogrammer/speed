@@ -45,21 +45,18 @@ class Worker extends Process
     /**
      * @return int
      */
-    public function getMaxFreeTime()
-    {
+    public function getMaxFreeTime() {
         return $this->maxFreeTime;
     }
 
     /**
      * @param int $maxFreeTime
      */
-    public function setMaxFreeTime($maxFreeTime)
-    {
+    public function setMaxFreeTime($maxFreeTime) {
         $this->maxFreeTime = $maxFreeTime;
     }
 
-    public function __construct($stream)
-    {
+    public function __construct($stream) {
         parent::__construct();
         $this->setPid(posix_getpid());
 
@@ -81,7 +78,6 @@ class Worker extends Process
         throw new \Exception(sprintf('message:%s, file:%s,line:%s,context:%s', $errStr, $errFile, $errLine, $errContext), $errorNo);
     }
 
-    private $count = 1;
     /**
      * 处理从父进程接收到的消息
      * @param MessageInterface $message
@@ -99,7 +95,6 @@ class Worker extends Process
                     $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_FINISHED, [
                         'pid' => $this->getPid(),
                     ]));
-                    $this->count++;
                     // 不在处理消息
                     if ($this->state == self::STATE_READING_EXIT) {
                         $this->sendReadyExitMessage();
@@ -110,10 +105,8 @@ class Worker extends Process
                     $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_QUIT_ME, [
                         'pid' => $this->getPid()
                     ]));
-                    $this->isLast = true;
                     break;
                 case MessageAction::MESSAGE_YOU_EXIT:
-                    $this->isEnd = true;
                     $this->stop();
                     return;
                 case MessageAction::MESSAGE_CUSTOM:
@@ -130,8 +123,6 @@ class Worker extends Process
         }
 
     }
-    private $isEnd = false;
-    private $isLast = false;
 
     /**
      * 这个定时器，用于监控进程最大空闲时间，以方便退出
@@ -173,13 +164,10 @@ class Worker extends Process
      * @throws \Exception
      */
     public function sendReadyExitMessage() {
-
-        $this->isSendExit = true;
         $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_READY_EXIT, [
             'pid' => $this->getPid()
         ]));
     }
-    private $isSendExit = false;
     /**
      * 子进程挂起
      */
@@ -266,20 +254,6 @@ class Worker extends Process
             throw new MessageFormatExcetion();
         }
 
-    }
-
-    public function stat() {
-        return array(
-            'state' => $this->state,
-            'isWriteAble' => $this->communication ? $this->communication->isWritable() : -1,
-            'isReadAble' => $this->communication ? $this->communication->isReadable() : -1,
-            'freeTime' => $this->maxFreeTime,
-            'count' => $this->count,
-            'isEnd' => $this->isEnd,
-            'isLast' => $this->isLast,
-            'isSendExit' => $this->isSendExit,
-            'bufferData' => $this->communication->getBufferData()
-        );
     }
 
     public function getName()

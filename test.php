@@ -52,7 +52,7 @@ $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
     var_dump($worker->getPid(), $ex->getMessage(), $ex->getTraceAsString());
     $worker->stop();
 })->addSignal(SIGUSR1, function ($signal, \Lan\Speed\Worker $worker) {
-    var_dump($worker->stat());
+     //TODO DO SOMETHING
 });
 
 try {
