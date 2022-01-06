@@ -16,7 +16,85 @@
 
 推荐使用`composer`安装, 包还未上架，敬请期待
 
+### 使用用例
+1. 入门示例:
+```php
+$queues = [
+    'hello',
+    'world',
+    'fanout'
+];
 
+$connection  = new \Lan\Speed\Connection([
+    'host' => 'x.x.x.x',
+    'username' => 'guest',
+    'password' => 'guest',
+    'vhost' => '/',
+], $queues);
+
+//$connection->setPrefetchCount(10);
+$factory = new \Lan\Speed\WorkerFactory();
+
+$factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
+    $worker->setName('worker:consumer:' . $worker->getPid());
+    //$worker->setMaxFreeTime(5); // 如果设置了空闲时间>0,则视为子进程可以空闲退出，
+})->registerEvent('end', function (\Lan\Speed\Worker $worker) { // 子进程退出触发的end事件
+//    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
+//        'pid' => $worker->getPid()
+//    ]));
+})->registerEvent('message', function (\Lan\Speed\Worker $worker, \Lan\Speed\Message $message) { // 消息处理事件，rabbitmq 转发给子进程的消息
+    usleep(100000);
+    $body = json_decode($message->getBody(), true);
+    $body['time'] = intval(microtime(true) * 1000);
+    $body['pid'] = $worker->getPid();
+
+    //file_put_contents('consumed.log', json_encode($body).PHP_EOL, FILE_APPEND);
+})->registerEvent('disconnect', function (\Lan\Speed\Worker $worker) { // IPC socket 连接断开
+    echo sprintf('worker %s disconnect!', $worker->getPid());
+})->registerEvent('error', function (Exception $ex, \Lan\Speed\Worker $worker) { // 子进程出现的异常
+    var_dump($worker->getPid(), $ex->getMessage(), $ex->getTraceAsString());
+    $worker->stop();
+})->addSignal(SIGUSR1, function ($signal, \Lan\Speed\Worker $worker) {  // 添加信号处理handler
+    var_dump($worker->stat());
+});
+
+try {
+    $master = new \Lan\Speed\Master($connection, $factory);
+
+    $master->setName('master:dispatcher')
+        ->setMaxCacheMessageCount(2000)
+        ->setMaxWorkerNum(5)
+        ->addSignal(SIGINT, function ($signal) use ($master) { // 主进程添加信号处理handler
+            $master->stop();
+        })->addSignal(SIGTERM, function ($signal) use ($master) {
+            $master->stop();
+        })->addSignal(SIGUSR1, function ($signal) use ($master){
+            // TODO 监听信号
+            var_dump($master->stat());
+        })->on('error', function (\Exception $ex) { // 异常出现错误
+            var_dump($ex->getMessage(), $ex->getTraceAsString());
+        })->on('workerExit', function ($pid, $master) { // 子进程退出
+            echo 'worker ', $pid, ' exit!!!', PHP_EOL;
+        })->on('patrolling', function (\Lan\Speed\Master $master) { // 轮询，默认为60s一次
+            echo 'patrolling'.PHP_EOL;
+            $memorySize = memory_get_usage(true);
+            if ($memorySize > 0) {
+                $size = $memorySize / 1024 / 1024; //(M)
+                var_dump($size);
+            }
+
+        });
+
+    $master->run(true);
+} catch (\Exception $ex) {
+    var_dump([
+        $ex->getMessage(),
+        $ex->getTraceAsString()
+    ]);
+
+    $master->stop();
+}
+```
 ## Built With
 
 * [bunny/bunny](http://www.dropwizard.io/1.0.2/docs/) - rabbitmq  异步客户端
