@@ -39,7 +39,12 @@ class WorkerFactory
                 }
 
                 foreach ($handlers as $handler) {
-                    $worker->addSignal($signal, $handler);
+                    $wrapped = function ($callback) use ($worker) {
+                        return function ($signal) use ($callback, $worker) {
+                            $callback($signal, $worker);
+                        };
+                    };
+                    $worker->addSignal($signal, $wrapped($handler));
                 }
             }
         }

@@ -97,9 +97,14 @@ class Master extends Process implements HandlerInterface
      */
     private $processTimer = null;
 
-
+    /**
+     * @var bool 是否以守护进程的方式运行
+     */
     private $daemon = false;
 
+    /**
+     * @var null 日志打印logger
+     */
     private $logger = null;
 
     /**
@@ -181,6 +186,7 @@ class Master extends Process implements HandlerInterface
                 if (isset($body['pid']) && $body['pid']) {
                     $this->scheduleWorker->workerFree($body['pid']);
                     $this->statistics[$body['pid']]['consumedCount']++;
+
                 }
                 $this->dispatchCacheMessage();
                 break;
@@ -188,11 +194,15 @@ class Master extends Process implements HandlerInterface
             // 子进程准备退出
             case MessageAction::MESSAGE_READY_EXIT:
                 $this->scheduleWorker->retireWorker($body['pid']);
-                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_LAST));
+                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_LAST, [
+                    'toPid' => $body['pid']
+                ]));
                 break;
             // 子进程已经准备好了，发送此消息
             case MessageAction::MESSAGE_QUIT_ME:
-                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_YOU_EXIT));
+                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_YOU_EXIT, [
+                    'toPid' => $body['pid']
+                ]));
                 break;
             case MessageAction::MESSAGE_CUSTOM:
                 //TODO 自定义消息处理
@@ -208,13 +218,9 @@ class Master extends Process implements HandlerInterface
     public function removeWorker($pid = 0) {
         if (isset($this->workers[$pid])) {
             if (isset($this->workers[$pid]['stream'])) {
-                $this->workers[$pid]['stream']->end();
+                $this->workers[$pid]['stream']->close();
                 return;
             }
-
-            unset($this->workers[$pid]);
-            $this->scheduleWorker->retireWorker($pid);
-            $this->emit('workerExit', [$pid, $this]);
         }
     }
 
@@ -249,8 +255,9 @@ class Master extends Process implements HandlerInterface
             $stream = new Stream($sockets[1], $this->eventLoop);
             $stream->on('data', array($stream, 'baseRead'));
             $stream->on('message', array($this, 'onReceive'));
-            $stream->on('error', function ($error, $stream) {
-                //$this->emit('error', array($error, $stream));
+            $stream->on('error', function ($error, Stream $stream) use ($pid) {
+                $stream->close();
+                posix_kill($pid, SIGINT);
                 throw new SocketWriteException($error->getMessage());
             });
 
@@ -266,34 +273,37 @@ class Master extends Process implements HandlerInterface
 
             $this->workers[$pid]['stream'] = $stream;
             $this->statistics[$pid] = $this->initStatistics();
-
+            $this->scheduleWorker->workerFree($pid);
         } else if ($pid == 0) {
-            $this->cancelProcessTimer();
-            $this->removeAllListeners();
-            $this->removeAllSignal();
+            try {
+                $this->cancelProcessTimer();
+                $this->removeAllListeners();
+                $this->removeAllSignal();
+                $this->eventLoop->stop();
 
-
-//            foreach ($this->workers as $worker) {
-//                if (isset($worker['stream']) && !empty($worker['stream'])) {
-//                    $worker['stream']->end();
+//                foreach ($this->workers as $worker) {
+//                    if (isset($worker['stream']) && !empty($worker['stream'])) {
+//                        $worker['stream']->close();
+//                    }
 //                }
-//            }
 
-            fclose($sockets[1]);
+                fclose($sockets[1]);
 
-            unset(
-                $sockets[1], $this->eventLoop, $this->statistics,
-                $this->stashMessage, $this->scheduleWorker
-            );
+                unset(
+                    $sockets[1], $this->eventLoop, $this->statistics, //$this->workers,
+                    $this->stashMessage, $this->scheduleWorker
+                );
 
-            $worker = $this->workerFactory->makeWorker($sockets[0]);
-            $worker->run();
+                $worker = $this->workerFactory->makeWorker($sockets[0]);
+                $worker->run();
+            } catch (\Exception $ex) {
+                exit(-1);
+            }
 
         } else {
             throw new WorkerCreateException();
         }
 
-        $this->scheduleWorker->workerFree($pid);
         return $pid;
     }
 
@@ -339,7 +349,10 @@ class Master extends Process implements HandlerInterface
                     $this->stop();
                     break;
                 }
+
                 $this->emit('error', [$ex]);
+            } finally {
+                $this->waitChildrenExit();
             }
 
             $this->emit('patrolling', [$this]);
@@ -431,6 +444,9 @@ EOT;
         $this->eventLoop->run();
     }
 
+    /**
+     * 停止事件循环器
+     */
     public function stopLoop() {
         $this->cancelProcessTimer();
         $this->eventLoop->stop();
@@ -571,7 +587,10 @@ EOT;
             $stream = $this->workers[$workerPid]['stream'];
             if ($stream->isWritable()) {
                 $message = serialize($message);
-                $stream->baseWrite($message);
+                $status = $stream->send($message);
+                if (!$status) {
+                    echo 'write failed'.PHP_EOL;
+                }
                 $this->statistics[$workerPid]['receiveCount']++;
             } else {
                 throw new SocketWriteException();
@@ -588,7 +607,6 @@ EOT;
     public function onReceive($data, Stream $stream) {
         /** @var MessageInterface $message */
         $message = unserialize($data);
-
         if ($message instanceof \Lan\Speed\Message) {
             $this->handleMessage($message);
         } else if (is_string($message)) {

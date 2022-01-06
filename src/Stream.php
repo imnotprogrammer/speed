@@ -8,16 +8,34 @@ use Lan\Speed\Protocols\Simple;
 
 class Stream extends \React\Stream\Stream
 {
+    /**
+     * @var bool 是否读到流的结尾处
+     */
     private $checkEOF = false;
 
+    /**
+     * @var string 接受到的数据buffer
+     */
     private $receiveData = '';
 
+    /**
+     * @var bool 是否暂停接受
+     */
     private $isPause = false;
 
+    /**
+     * @var string 使用协议类名
+     */
     private $protocol = Simple::class;
 
+    /**
+     * @var int 数据包的长度
+     */
     private $currentPackageLength = 0;
 
+    /**
+     * 关闭数据流
+     */
     public function close()
     {
         if (!$this->writable && !$this->closing) {
@@ -41,6 +59,12 @@ class Stream extends \React\Stream\Stream
         $this->handleClose();
     }
 
+    /**
+     * 读取数据，这里按照具体的协议分割数据流，然后得到我们的消息包
+     *  这里参照了workerman中读取数据方法
+     * @param $data
+     * @param Stream $stream
+     */
     public function baseRead($data, Stream $stream) {
 
         if ($data === '' || $data === false) {
@@ -55,7 +79,7 @@ class Stream extends \React\Stream\Stream
         // If the application layer protocol has been set up.
         if ($this->protocol) {
             $parser = $this->protocol;
-            while ($this->receiveData !== '' && !$this->isPause) {
+            while ($this->receiveData !== '') {
                 // The current packet length is known.
                 if ($this->currentPackageLength) {
                     // Data is not enough for a package.
@@ -64,7 +88,7 @@ class Stream extends \React\Stream\Stream
                     }
                 } else {
                     // Get current package length.
-                    $this->currentPackageLength = $parser::input($this->receiveData, $this);
+                    $this->currentPackageLength = $parser::length($this->receiveData, $this);
                     // The packet length is unknown.
                     if ($this->currentPackageLength === 0) {
                         break;
@@ -116,9 +140,30 @@ class Stream extends \React\Stream\Stream
         }
     }
 
+    /**
+     * 发送数据
+     * @param $buffer
+     * @return bool|void|null
+     */
+    public function send($buffer) {
+        if ($this->protocol) {
+            $parser = $this->protocol;
+            $buffer = $parser::encode($buffer, $this);
+            if (!$buffer) {
+                return null;
+            }
 
-    public function baseWrite($buffer) {
-        $parser = $this->protocol;
-        return $this->write($parser::encode($buffer, $this));
+            return $this->write($buffer);
+        }
+        return $this->write($buffer);
+    }
+
+    public function getBufferData()
+    {
+        return $this->getBuffer()->getData();
+    }
+
+    public function getReceiveData() {
+        return $this->receiveData;
     }
 }

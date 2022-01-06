@@ -7,6 +7,11 @@ namespace Lan\Speed\Protocols;
 use Lan\Speed\Impl\ProtocolInterface;
 use React\Stream\DuplexStreamInterface;
 
+/**
+ * 基于Frame协议
+ * Class Simple
+ * @package Lan\Speed\Protocols
+ */
 class Simple implements ProtocolInterface
 {
 
@@ -17,7 +22,7 @@ class Simple implements ProtocolInterface
      * @param DuplexStreamInterface $stream
      * @return int
      */
-    public static function input($buffer, DuplexStreamInterface $stream)
+    public static function length($buffer, DuplexStreamInterface $stream)
     {
         if (strlen($buffer) < 4) {
             return 0;

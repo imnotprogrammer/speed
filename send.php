@@ -6,7 +6,7 @@ use Bunny\Client;
 require './vendor/autoload.php';
 
 $client = (new Client([
-    'host' => '192.168.123.126',
+    'host' => '172.17.0.3',
     'vhost' => 'docs',
     'username' => 'rabbitmq_user',
     'password' => '123456'

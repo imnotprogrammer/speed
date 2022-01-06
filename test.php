@@ -21,7 +21,7 @@ $queues = [
 ];
 
 $connection  = new \Lan\Speed\Connection([
-    'host' => '192.168.123.126',
+    'host' => '172.17.0.3',
     'username' => 'rabbitmq_user',
     'password' => '123456',
     'vhost' => 'docs',
@@ -32,7 +32,7 @@ $factory = new \Lan\Speed\WorkerFactory();
 
 $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
     $worker->setName('worker:consumer:' . $worker->getPid());
-    //$worker->setMaxFreeTime(5);
+    $worker->setMaxFreeTime(5);
 })->registerEvent('end', function (\Lan\Speed\Worker $worker) {
 //    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
 //        'pid' => $worker->getPid()
@@ -51,6 +51,8 @@ $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
 })->registerEvent('error', function (Exception $ex, \Lan\Speed\Worker $worker) {
     var_dump($worker->getPid(), $ex->getMessage(), $ex->getTraceAsString());
     $worker->stop();
+})->addSignal(SIGUSR1, function ($signal, \Lan\Speed\Worker $worker) {
+    var_dump($worker->stat());
 });
 
 try {
@@ -71,10 +73,16 @@ try {
         })->on('workerExit', function ($pid, $master) {
             echo 'worker ', $pid, ' exit!!!', PHP_EOL;
         })->on('patrolling', function (\Lan\Speed\Master $master) {
-            //file_put_contents('stat.log', date('Y-m-d H:i:s', time()) . var_export($master->stat(), true) .PHP_EOL, FILE_APPEND);
+            echo 'patrolling'.PHP_EOL;
+            $memorySize = memory_get_usage(true);
+            if ($memorySize > 0) {
+                $size = $memorySize / 1024 / 1024; //(M)
+                var_dump($size);
+            }
+
         });
 
-    $master->run(false);
+    $master->run(true);
 } catch (\Exception $ex) {
     var_dump([
         $ex->getMessage(),

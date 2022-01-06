@@ -8,7 +8,25 @@ use React\Stream\DuplexStreamInterface;
 
 interface ProtocolInterface
 {
-    public static function input($buffer, DuplexStreamInterface $stream);
+    /**
+     * 获取包的长度
+     * @param $buffer
+     * @param DuplexStreamInterface $stream
+     * @return mixed
+     */
+    public static function length($buffer, DuplexStreamInterface $stream);
+
+    /**
+     * 协议解析
+     * @param $buffer
+     * @return mixed
+     */
     public static function decode($buffer);
+
+    /**
+     * 转变协议
+     * @param $buffer
+     * @return mixed
+     */
     public static function encode($buffer);
 }
