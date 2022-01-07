@@ -9,6 +9,10 @@ use Lan\Speed\Impl\MessageInterface;
 use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
 
+/**
+ * Class Process
+ * @package Lan\Speed
+ */
 abstract class Process extends EventEmitter
 {
     /** @var int 进程终止状态 */

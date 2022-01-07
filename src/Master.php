@@ -7,13 +7,11 @@ use Bunny\Channel;
 use Bunny\Exception\ClientException;
 use Bunny\Message;
 use Lan\Speed\Exception\DaemonException;
-use Lan\Speed\Exception\MessageFormatExcetion;
 use Lan\Speed\Exception\SocketCreateException;
 use Lan\Speed\Exception\SocketWriteException;
 use Lan\Speed\Exception\WorkerCreateException;
 use Lan\Speed\Impl\HandlerInterface;
 use Lan\Speed\Impl\MessageInterface;
-use Psr\Log\LoggerInterface;
 use React\EventLoop\Factory;
 use React\Promise\Promise;
 
@@ -108,6 +106,8 @@ class Master extends Process implements HandlerInterface
      */
     private $wrapMessageProcess = null;
 
+    private $isAutoClear = true;
+
     /**
      * Master constructor.
      * @param Connection $connection
@@ -123,13 +123,33 @@ class Master extends Process implements HandlerInterface
         $this->init();
     }
 
+    /**
+     * 以守护进程方式进行
+     * @return $this
+     */
     public function enableDaemon() {
         $this->daemon = true;
         return $this;
     }
 
+    /**
+     * 进程挂起，随终端
+     * @return $this
+     */
     public function disableDaemon() {
         $this->daemon = false;
+        return $this;
+    }
+
+    /**
+     * 是否自动回收进程信息
+     * 在开启工作进程空闲退出时，建议进行手动回收，
+     * 默认状态时会开启自动回收
+     * @param false $status
+     * @return $this
+     */
+    public function setAutoClear($status = true) {
+        $this->isAutoClear = $status;
         return $this;
     }
 
@@ -353,6 +373,11 @@ class Master extends Process implements HandlerInterface
         while ($this->state == self::STATE_RUNNING) {
             try {
                 $this->loop($this->blockTime);
+
+                if ($this->isAutoClear) {
+                    $this->clearRetireWorker();
+                }
+
             } catch (\Exception $ex) {
                 if ($ex instanceof ClientException) {
                     $this->stop();
@@ -383,7 +408,6 @@ class Master extends Process implements HandlerInterface
      */
     public function clearWorkers() {
         $readyCount = 3;
-
         while ($readyCount > 0) {
             foreach ($this->workers as $pid => $worker) {
                 $this->sendMessage($pid, new \Lan\Speed\Message(MessageAction::MESSAGE_LAST));
@@ -428,14 +452,8 @@ EOT;
      * @param $message
      */
     public function safeEcho($message) {
-        if ($this->daemon) {
-            if ($this->logger) {
-                $this->logger->info($message);
-            } else {
-                fwrite(STDOUT, $message);
-            }
-        } else {
-            fwrite(STDOUT, $message . PHP_EOL);
+        if (!function_exists('posix_isatty') || posix_isatty(STDOUT)) {
+            echo $message.PHP_EOL;
         }
     }
 
@@ -612,10 +630,8 @@ EOT;
      * @return array
      */
     public function stat() {
-        $workerConsumed = 0;
         foreach ($this->statistics as $key => $statistic) {
             $this->statistics[$key]['state'] = $this->scheduleWorker->getWorkerState($key);
-            $workerConsumed += $statistic['consumedCount'];
         }
 
         return array(
@@ -625,8 +641,44 @@ EOT;
             'cacheMessage' => count($this->stashMessage),
             'freeWorkerCount' => $this->scheduleWorker->getFreeWorker(),
             'statistics' => $this->statistics,
-            'workerConsumedCount' => $workerConsumed
         );
+    }
+
+    /**
+     * 清除不存在的状态信息，避免进程空闲退出时，没有回收相信，导致数组变得越来越大，然后出现内存溢出的问题
+     * 可以开启定时处理 或者用户在patrolling 事件中手动回收
+     * @return array
+     */
+    public function clearRetireWorker() {
+        $this->safeEcho('start to clear retire worker');
+        // 清除统计信息
+        $statisticInfo = $this->clearStatistics($this->scheduleWorker->getRetireWorker());
+        // 清除调度中的workerInfo信息
+        if (count($statisticInfo) >= 1) {
+            $this->scheduleWorker->clear();
+        }
+
+        $this->safeEcho('clear retire worker end');
+        return $statisticInfo;
+    }
+
+    /**
+     * 清理统计信息
+     * @param $pids
+     * @return array
+     */
+    public function clearStatistics($pids) {
+        $result = array();
+        foreach ($this->statistics as $pid => $item) {
+            if (is_array($pids) && in_array($pid, $pids)) {
+                $result[$pid] = $item;
+                unset($this->statistics[$pid]);
+            } else if ($pids == $pid) {
+                unset($this->statistics[$pid]);
+                $result[$pid] = $item;
+            }
+        }
+        return $result;
     }
 
     /**
@@ -641,7 +693,7 @@ EOT;
     {
         try {
             if ($this->wrapMessageProcess) {
-                $data = call_user_func($this->wrapMessageProcess, array($message, $queue, $this));
+                $data = call_user_func($this->wrapMessageProcess, $message, $queue, $this);
             } else {
                 $data = new \Lan\Speed\Message(MessageAction::MESSAGE_CONSUME, [
                     'message' => $message,
@@ -712,5 +764,10 @@ EOT;
 
     public function isReachedMaxCacheCount() {
         return $this->stashMessage->count() >= $this->maxCacheMessageCount;
+    }
+
+    public function setWrapMessageHandler(callable $callback) {
+        $this->wrapMessageProcess = $callback;
+        return $this;
     }
 }

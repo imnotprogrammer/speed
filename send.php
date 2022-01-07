@@ -40,13 +40,12 @@ function GetRandStr($length){
 
 $isEnd = false;
 while (!$isEnd) {
-    $rand = mt_rand(1, 300);
-    for ($i = 0; $i < 500; $i++) {
+    $rand = mt_rand(1, 100);
+    for ($i = 0; $i < $rand; $i++) {
         try {
-            //$channel->publish(GetRandStr(12), [], '', 'hello');
+            $channel->publish(GetRandStr(12), [], '', 'hello');
             $channel->publish(GetRandStr(1000), [], 'fanout_ex');
-            //$channel->publish(GetRandStr(1000), [], '', 'world');
-            $isEnd = true;
+            $channel->publish(GetRandStr(1000), [], '', 'world');
         } catch (\Exception $ex) {
             $isEnd = true;
             break;

@@ -73,9 +73,15 @@ try {
     $master = new \Lan\Speed\Master($connection, $factory);
 
     $master->setName('master:dispatcher')
-        ->enableDaemon()
+        ->setWrapMessageHandler(function (\Bunny\Message $message, $queue, \Lan\Speed\Master $master) {
+            return new \Lan\Speed\Message(\Lan\Speed\MessageAction::MESSAGE_CONSUME, [
+                'message' => $message,
+                'queue' => $queue
+            ]);
+        })
+        ->setAutoClear(false)
         ->setMaxCacheMessageCount(2000)
-        ->setMaxWorkerNum(5)
+        ->setMaxWorkerNum(20)
         ->addSignal(SIGINT, function ($signal) use ($master) {
             $master->stop();
         })->addSignal(SIGTERM, function ($signal) use ($master) {

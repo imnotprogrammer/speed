@@ -14,20 +14,11 @@ class ScheduleWorker
     /** @var int 进程当前状态-忙碌 */
     const WORKER_STATE_BUSY = 1;
 
-    /** @var int 进程当前状态-已分配 */
-    const WORKER_STATE_ALLOCATE = 2;
-
     /** @var int 进程当前状态-不在处理消息 */
     const WORKER_STATE_IGNORE = 3;
 
     /** @var int 进程不存在 */
     const WORKER_STATE_NOT_EXIST = -1;
-
-    /** @var string 繁忙标识 */
-    const WORKER_BUSY = 'busy';
-
-    /** @var string 空闲标识 */
-    const WORKER_FREE = 'free';
 
     /** @var array 进程调度表
      * 格式:  array(
@@ -40,8 +31,6 @@ class ScheduleWorker
     /** @var int 空闲进程数 */
     private $freeCount = 0;
 
-    /** @var int 繁忙进程数 */
-    private $busyCount = 0;
 
     /**
      * 获取可以分配的空闲进程ID
@@ -121,5 +110,27 @@ class ScheduleWorker
 
     public function getWorkerState($pid) {
         return isset($this->workerInfo[$pid]) ? $this->workerInfo[$pid] : '-1';
+    }
+    
+    public function getRetireWorker() {
+        $pids = array();
+        foreach ($this->workerInfo as $pid => $state) {
+            if ($state == self::WORKER_STATE_IGNORE) {
+                $pids[] = $pid;
+            }
+        }
+        return $pids;
+    }
+
+    /**
+     * 清除退休/已经不存在的进程状态信息，
+     * 主要在进程空闲退出时，即使回收无用信息，避免内存溢出
+     */
+    public function clear() {
+        foreach ($this->workerInfo as $pid => $state) {
+            if ($state == self::WORKER_STATE_IGNORE) {
+                unset($this->workerInfo[$pid]);
+            }
+        }
     }
 }
