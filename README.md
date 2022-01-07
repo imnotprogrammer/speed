@@ -95,12 +95,15 @@ try {
     $master->stop();
 }
 ```
-## Built With
+### TO DO
+1. 消费者模型框架完成
+2. 改进消息对象（TO DO）
+### Built With
 
 * [bunny/bunny](http://www.dropwizard.io/1.0.2/docs/) - rabbitmq  异步客户端
 * [react/event-loop](http://www.dropwizard.io/1.0.2/docs/) - event loop
 * [react/stream](http://www.dropwizard.io/1.0.2/docs/) - stream 
 
-## License
+### License
 
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details

@@ -4,7 +4,6 @@
 namespace Lan\Speed;
 
 
-use Lan\Speed\Exception\MessageFormatExcetion;
 use Lan\Speed\Impl\MessageInterface;
 use React\EventLoop\Timer\Timer;
 
@@ -62,7 +61,7 @@ class Worker extends Process
 
         $this->communication = new Stream($stream, $this->getEventLoop());
         $this->communication->on('data', [$this->communication, 'baseRead']);
-        $this->communication->on('message', [$this, 'receiveMessage']);
+        $this->communication->on('message', [$this, 'onReceive']);
         $this->communication->on('error', function (\Exception $error, Stream $stream) {
             $this->emit('error', [$error, $this]);
         });
@@ -91,10 +90,12 @@ class Worker extends Process
             switch ($message->getAction()) {
                 // 处理主进程派发的任务消息，的处理逻辑交给给worker监听的message事件处理
                 case MessageAction::MESSAGE_CONSUME:
+                    $this->state = self::STATE_FREE;
                     $this->emit('message', [$this, $message]);
                     $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_FINISHED, [
                         'pid' => $this->getPid(),
                     ]));
+                    $this->state = self::STATE_RUNNING;
                     // 不在处理消息
                     if ($this->state == self::STATE_READING_EXIT) {
                         $this->sendReadyExitMessage();
@@ -232,28 +233,6 @@ class Worker extends Process
         } else {
             throw new \Exception($this->getPid() . 'socket channel closed');
         }
-    }
-
-    /**
-     * 收到主进程发来的消息，然后转发给消息处理器
-     * @param $content
-     * @param Stream $stream
-     * @throws MessageFormatExcetion
-     */
-    public function receiveMessage($content, Stream $stream) {
-        /** @var MessageInterface $message */
-        $message = unserialize($content);
-        if ($message instanceof MessageInterface) {
-            $this->handleMessage($message);
-        } else if (is_string($message)) {
-            $message = json_decode($message, true);
-            if ($message) {
-                $this->handleMessage($message);
-            }
-        } else {
-            throw new MessageFormatExcetion();
-        }
-
     }
 
     public function getName()

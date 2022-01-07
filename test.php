@@ -26,8 +26,22 @@ $connection  = new \Lan\Speed\Connection([
     'password' => '123456',
     'vhost' => 'docs',
 ], $queues);
+$logger = new \Monolog\Logger('queue');
+$handler = new \Monolog\Handler\RotatingFileHandler('queue.log', 15);
+$handler->setFormatter(new \Monolog\Formatter\JsonFormatter());
+$logger->pushHandler($handler);
+$logger->pushProcessor(function ($record) {
+    if (isset($record['datetime'])) {
+        $datetime = $record['datetime'];
+        if ($datetime instanceof DateTime) {
+            $datetime = $datetime->format('Y-m-d H:i:s.u');
+            $record['datetime'] = $datetime;
+        }
+    }
 
-//$connection->setPrefetchCount(10);
+    return $record;
+});
+
 $factory = new \Lan\Speed\WorkerFactory();
 
 $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
@@ -37,13 +51,13 @@ $factory->registerEvent('start', function (\Lan\Speed\Worker $worker) {
 //    $worker->sendMessage(new \Lan\Speed\Impl\Message(\Lan\Speed\MessageAction::MESSAGE_WORKER_EXIT, [
 //        'pid' => $worker->getPid()
 //    ]));
-})->registerEvent('message', function (\Lan\Speed\Worker $worker, \Lan\Speed\Message $message) {
+})->registerEvent('message', function (\Lan\Speed\Worker $worker, \Lan\Speed\Message $message) use ($logger) {
     usleep(100000);
-    $body = json_decode($message->getBody(), true);
-    $body['time'] = intval(microtime(true) * 1000);
-    $body['pid'] = $worker->getPid();
 
-    //file_put_contents('consumed.log', json_encode($body).PHP_EOL, FILE_APPEND);
+    $logger->info('consume message', [
+        'service' => 'consume',
+        'data' => $message->toArray()
+    ]);
 })->registerEvent('end', function (\Lan\Speed\Worker $worker) {
     echo sprintf('worker %s exit! '.PHP_EOL, $worker->getPid());
 })->registerEvent('disconnect', function (\Lan\Speed\Worker $worker) {
@@ -59,6 +73,7 @@ try {
     $master = new \Lan\Speed\Master($connection, $factory);
 
     $master->setName('master:dispatcher')
+        ->enableDaemon()
         ->setMaxCacheMessageCount(2000)
         ->setMaxWorkerNum(5)
         ->addSignal(SIGINT, function ($signal) use ($master) {
@@ -82,7 +97,7 @@ try {
 
         });
 
-    $master->run(true);
+    $master->run();
 } catch (\Exception $ex) {
     var_dump([
         $ex->getMessage(),

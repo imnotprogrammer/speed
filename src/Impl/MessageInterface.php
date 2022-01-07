@@ -8,4 +8,5 @@ interface MessageInterface
 {
     public function getBody();
     public function getAction();
+    public function toArray();
 }

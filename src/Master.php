@@ -13,6 +13,7 @@ use Lan\Speed\Exception\SocketWriteException;
 use Lan\Speed\Exception\WorkerCreateException;
 use Lan\Speed\Impl\HandlerInterface;
 use Lan\Speed\Impl\MessageInterface;
+use Psr\Log\LoggerInterface;
 use React\EventLoop\Factory;
 use React\Promise\Promise;
 
@@ -103,9 +104,9 @@ class Master extends Process implements HandlerInterface
     private $daemon = false;
 
     /**
-     * @var null 日志打印logger
+     * @var callable null
      */
-    private $logger = null;
+    private $wrapMessageProcess = null;
 
     /**
      * Master constructor.
@@ -119,6 +120,17 @@ class Master extends Process implements HandlerInterface
         $this->scheduleWorker = new ScheduleWorker();
         $this->stashMessage = new \SplDoublyLinkedList();
         parent::__construct();
+        $this->init();
+    }
+
+    public function enableDaemon() {
+        $this->daemon = true;
+        return $this;
+    }
+
+    public function disableDaemon() {
+        $this->daemon = false;
+        return $this;
     }
 
     /**
@@ -310,15 +322,13 @@ class Master extends Process implements HandlerInterface
 
     /**
      * 主进程启动，正式开始任务循环分配
-     * @param bool $daemon
      * @throws DaemonException
      * @throws WorkerCreateException
      * @throws SocketCreateException
      * @throws SocketWriteException
      */
-    public function run($daemon = true) {
-        if ($daemon) {
-            $this->daemon = true;
+    public function run() {
+        if ($this->daemon) {
             $this->daemon();
         }
 
@@ -326,7 +336,6 @@ class Master extends Process implements HandlerInterface
            $this->eventLoop = Factory::create();
         }
 
-        $this->init();
         $this->emit('start', [$this]);
 
         $this->state = self::STATE_RUNNING;
@@ -599,28 +608,6 @@ EOT;
     }
 
     /**
-     * 收到子进程的消息
-     * @param $data
-     * @param Stream $stream
-     * @throws MessageFormatExcetion
-     */
-    public function onReceive($data, Stream $stream) {
-        /** @var MessageInterface $message */
-        $message = unserialize($data);
-        if ($message instanceof \Lan\Speed\Message) {
-            $this->handleMessage($message);
-        } else if (is_string($message)) {
-            $message = json_decode($message, true);
-            if ($message) {
-                $this->handleMessage($message);
-            }
-        } else {
-            throw new MessageFormatExcetion();
-        }
-
-    }
-
-    /**
      * 统计数据
      * @return array
      */
@@ -653,21 +640,21 @@ EOT;
     public function consume(Message $message, Channel $channel, BunnyClient $client, $queue)
     {
         try {
-            $messageArr = array(
-                'routingKey' => $message->routingKey ?: '',
-                'consumerTag' => $message->consumerTag,
-                'exchange' => $message->exchange,
-                'body' => $message->content,
-                'queue' => $queue,
-            );
+            if ($this->wrapMessageProcess) {
+                $data = call_user_func($this->wrapMessageProcess, array($message, $queue, $this));
+            } else {
+                $data = new \Lan\Speed\Message(MessageAction::MESSAGE_CONSUME, [
+                    'message' => $message,
+                    'queue' => $queue
+                ]);
+            }
 
-            $newMessage = new \Lan\Speed\Message(MessageAction::MESSAGE_CONSUME, json_encode($messageArr));
             // 子进程数达到最大限制
             $isCache = $this->isMaxLimit() && !$this->scheduleWorker->hasAvailableWorker();
             if ($isCache) {
-                $this->cacheMessage($newMessage);
+                $this->cacheMessage($data);
             } else {
-                $this->dispatch($newMessage);
+                $this->dispatch($data);
             }
 
             $this->receiveCount++;
@@ -687,8 +674,10 @@ EOT;
                 });
             }
 
+            return $promise;
         } catch (\Exception $ex) {
             $this->emit('error', [$ex]);
+            return false;
         }
     }
 
@@ -716,7 +705,6 @@ EOT;
             'consumedCount' => 0
         );
     }
-
 
     public function cacheMessage(MessageInterface $message) {
         $this->stashMessage->push(serialize($message));

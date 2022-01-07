@@ -4,6 +4,7 @@
 namespace Lan\Speed;
 
 use Evenement\EventEmitter;
+use Lan\Speed\Exception\MessageFormatExcetion;
 use Lan\Speed\Impl\MessageInterface;
 use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
@@ -38,16 +39,45 @@ abstract class Process extends EventEmitter
 
     private $signalHandlers = array();
 
+    public function __construct() {
+        $this->eventLoop = Factory::create();
+    }
+
     /**
-     * 父进程和子进程都需要实现此方法，用于父进程与子进程的通信
+     * 父进程和子进程都需要实现此方法，用于进程之间通信，消息进行处理
      * @param MessageInterface $message
      * @return mixed
      */
     abstract public function handleMessage(MessageInterface $message);
 
-    public function __construct() {
-        $this->eventLoop = Factory::create();
+    /**
+     * 事件循环处理开始
+     * @return mixed
+     */
+    abstract public function run();
+
+    /**
+     * epoll事件处理
+     * @param $data
+     * @param Stream $stream
+     * @throws MessageFormatExcetion
+     */
+    public function onReceive($data, Stream $stream) {
+        /** @var MessageInterface $message */
+        $message = unserialize($data);
+        if ($message instanceof \Lan\Speed\Message) {
+            $this->handleMessage($message);
+        } else if (is_string($message)) {
+            $message = json_decode($message, true);
+            if ($message) {
+                $this->handleMessage($message);
+            }
+        } else {
+            throw new MessageFormatExcetion();
+        }
     }
+
+
 
     /**
      * 将信号添加到事件处理器当中
@@ -111,9 +141,5 @@ abstract class Process extends EventEmitter
 
     public function getEventLoop() {
         return $this->eventLoop;
-    }
-
-    public function getSignalHandler() {
-        return $this->signalHandlers;
     }
 }

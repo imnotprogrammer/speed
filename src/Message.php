@@ -23,4 +23,11 @@ class Message implements \Lan\Speed\Impl\MessageInterface
     {
         return $this->body;
     }
+
+    public function toArray() {
+        return array(
+            'action' => $this->getAction(),
+            'body' => $this->getBody()
+        );
+    }
 }

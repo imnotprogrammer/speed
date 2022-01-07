@@ -157,13 +157,4 @@ class Stream extends \React\Stream\Stream
         }
         return $this->write($buffer);
     }
-
-    public function getBufferData()
-    {
-        return $this->getBuffer()->getData();
-    }
-
-    public function getReceiveData() {
-        return $this->receiveData;
-    }
 }

@@ -9,6 +9,7 @@
       <path value="$PROJECT_DIR$/vendor/bunny/bunny" />
       <path value="$PROJECT_DIR$/vendor/react/stream" />
       <path value="$PROJECT_DIR$/vendor/evenement/evenement" />
+      <path value="$PROJECT_DIR$/vendor/monolog/monolog" />
     </include_path>
   </component>
 </project>
