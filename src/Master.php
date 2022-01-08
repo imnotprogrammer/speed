@@ -102,10 +102,13 @@ class Master extends Process implements HandlerInterface
     private $daemon = false;
 
     /**
-     * @var callable null
+     * @var callable null 自定义处理AMQPmessage 包裹，可以使用此参数 自定义设置消息格式
      */
     private $wrapMessageProcess = null;
 
+    /**
+     * @var bool 是否自动清除统计信息
+     */
     private $isAutoClear = true;
 
     /**
@@ -322,7 +325,7 @@ class Master extends Process implements HandlerInterface
                 fclose($sockets[1]);
 
                 unset(
-                    $sockets[1], $this->eventLoop, $this->statistics, //$this->workers,
+                    $sockets[1], $this->eventLoop, $this->statistics, $this->workers,
                     $this->stashMessage, $this->scheduleWorker
                 );
 
@@ -566,7 +569,7 @@ EOT;
                     $this->emit('error', [$ex]);
                 });
             }
-        } else  if ($this->state == self::STATE_FLUSH_CACHE) {
+        } else if ($this->state == self::STATE_FLUSH_CACHE) {
             //$this->state = self::STATE_SHUTDOWN;
         }
     }
@@ -613,11 +616,7 @@ EOT;
             /** @var Stream $stream */
             $stream = $this->workers[$workerPid]['stream'];
             if ($stream->isWritable()) {
-                $message = serialize($message);
-                $status = $stream->send($message);
-                if (!$status) {
-                    echo 'write failed'.PHP_EOL;
-                }
+                $stream->send(serialize($message));
                 $this->statistics[$workerPid]['receiveCount']++;
             } else {
                 throw new SocketWriteException();
