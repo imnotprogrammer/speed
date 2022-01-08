@@ -16,6 +16,12 @@ class Message implements \Lan\Speed\Impl\MessageInterface
      */
     private $body;
 
+    /**
+     * @var int 消息发送进程id，0-表示为主进程发送
+     */
+    private $fromPid = 0;
+
+
     public function __construct($action, $body = array())
     {
         $this->action = $action;
@@ -33,10 +39,21 @@ class Message implements \Lan\Speed\Impl\MessageInterface
         return $this->body;
     }
 
-    public function toArray() {
+    public function toArray()
+    {
         return array(
             'action' => $this->getAction(),
             'body' => $this->getBody()
         );
+    }
+
+    public function setFromPID($pid)
+    {
+        $this->fromPid = $pid;
+    }
+
+    public function getFromPid()
+    {
+        return $this->fromPid;
     }
 }

@@ -213,14 +213,13 @@ class Master extends Process implements HandlerInterface
      */
     public function handleMessage(MessageInterface $message)
     {
-        $body = $message->getBody();
         switch ($message->getAction()) {
             // 子进程处理任务完毕
             case MessageAction::MESSAGE_FINISHED:
                 $this->consumedCount++;
-                if (isset($body['pid']) && $body['pid']) {
-                    $this->scheduleWorker->workerFree($body['pid']);
-                    $this->statistics[$body['pid']]['consumedCount']++;
+                if ($message->getFromPID()) {
+                    $this->scheduleWorker->workerFree($message->getFromPID());
+                    $this->statistics[$message->getFromPID()]['consumedCount']++;
 
                 }
                 $this->dispatchCacheMessage();
@@ -228,16 +227,12 @@ class Master extends Process implements HandlerInterface
 
             // 子进程准备退出
             case MessageAction::MESSAGE_READY_EXIT:
-                $this->scheduleWorker->retireWorker($body['pid']);
-                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_LAST, [
-                    'toPid' => $body['pid']
-                ]));
+                $this->scheduleWorker->retireWorker($message->getFromPID());
+                $this->sendMessage($message->getFromPID(), new \Lan\Speed\Message(MessageAction::MESSAGE_LAST));
                 break;
             // 子进程已经准备好了，发送此消息
             case MessageAction::MESSAGE_QUIT_ME:
-                $this->sendMessage($body['pid'], new \Lan\Speed\Message(MessageAction::MESSAGE_YOU_EXIT, [
-                    'toPid' => $body['pid']
-                ]));
+                $this->sendMessage($message->getFromPID(), new \Lan\Speed\Message(MessageAction::MESSAGE_YOU_EXIT));
                 break;
             case MessageAction::MESSAGE_CUSTOM:
                 //TODO 自定义消息处理
@@ -325,7 +320,7 @@ class Master extends Process implements HandlerInterface
                 fclose($sockets[1]);
 
                 unset(
-                    $sockets[1], $this->eventLoop, $this->statistics, $this->workers,
+                    $sockets[1], $this->eventLoop, $this->statistics, //$this->workers,
                     $this->stashMessage, $this->scheduleWorker
                 );
 
@@ -359,7 +354,7 @@ class Master extends Process implements HandlerInterface
            $this->eventLoop = Factory::create();
         }
 
-        $this->emit('start', [$this]);
+        $this->emit('start', array($this));
 
         $this->state = self::STATE_RUNNING;
         $this->connection->setPrefetchCount()
@@ -368,7 +363,7 @@ class Master extends Process implements HandlerInterface
             ->then(function () {
                 $this->state = self::STATE_RUNNING;
             }, function ($reason) {
-                $this->emit('error', [$reason]);
+                $this->emit('error', array($reason));
                 $this->stop();
             });
 
@@ -387,12 +382,12 @@ class Master extends Process implements HandlerInterface
                     break;
                 }
 
-                $this->emit('error', [$ex]);
+                $this->emit('error', array($ex));
             } finally {
                 $this->waitChildrenExit();
             }
 
-            $this->emit('patrolling', [$this]);
+            $this->emit('patrolling', array($this));
         }
 
         $this->flushCacheMessage();
@@ -402,7 +397,7 @@ class Master extends Process implements HandlerInterface
             $this->connection->disconnect();
         }
 
-        $this->emit('end', [$this]);
+        $this->emit('end', array($this));
     }
 
     /**
@@ -416,7 +411,7 @@ class Master extends Process implements HandlerInterface
                 $this->sendMessage($pid, new \Lan\Speed\Message(MessageAction::MESSAGE_LAST));
             }
 
-            $this->loop(0.4);//阻塞1秒，等待子进程退出
+            $this->loop(0.4);
             $this->waitChildrenExit();
             $readyCount--;
             if (count($this->workers) <= 0) {
@@ -609,19 +604,16 @@ EOT;
      * 向子进程发送消息
      * @param $workerPid
      * @param MessageInterface $message
+     * @return bool
      * @throws SocketWriteException
      */
     public function sendMessage($workerPid, MessageInterface $message) {
         if (isset($this->workers[$workerPid]['stream'])) {
-            /** @var Stream $stream */
-            $stream = $this->workers[$workerPid]['stream'];
-            if ($stream->isWritable()) {
-                $stream->send(serialize($message));
-                $this->statistics[$workerPid]['receiveCount']++;
-            } else {
-                throw new SocketWriteException();
-            }
+            $this->IPC($message, $this->workers[$workerPid]['stream'], false);
+            $this->statistics[$workerPid]['receiveCount']++;
+            return true;
         }
+        return false;
     }
 
     /**
@@ -649,7 +641,6 @@ EOT;
      * @return array
      */
     public function clearRetireWorker() {
-        $this->safeEcho('start to clear retire worker');
         // 清除统计信息
         $statisticInfo = $this->clearStatistics($this->scheduleWorker->getRetireWorker());
         // 清除调度中的workerInfo信息
@@ -657,7 +648,6 @@ EOT;
             $this->scheduleWorker->clear();
         }
 
-        $this->safeEcho('clear retire worker end');
         return $statisticInfo;
     }
 

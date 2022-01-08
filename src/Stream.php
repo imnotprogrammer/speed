@@ -34,6 +34,22 @@ class Stream extends \React\Stream\Stream
     private $currentPackageLength = 0;
 
     /**
+     * @return string
+     */
+    public function getProtocol()
+    {
+        return $this->protocol;
+    }
+
+    /**
+     * @param string $protocol
+     */
+    public function setProtocol($protocol)
+    {
+        $this->protocol = $protocol;
+    }
+
+    /**
      * 关闭数据流
      */
     public function close()
@@ -145,7 +161,8 @@ class Stream extends \React\Stream\Stream
      * @param $buffer
      * @return bool|void|null
      */
-    public function send($buffer) {
+    public function write($buffer)
+    {
         if ($this->protocol) {
             $parser = $this->protocol;
             $buffer = $parser::encode($buffer, $this);
@@ -153,8 +170,8 @@ class Stream extends \React\Stream\Stream
                 return null;
             }
 
-            return $this->write($buffer);
+            return parent::write($buffer);
         }
-        return $this->write($buffer);
+        return parent::write($buffer);
     }
 }

@@ -92,9 +92,7 @@ class Worker extends Process
                 case MessageAction::MESSAGE_CONSUME:
                     $this->state = self::STATE_FREE;
                     $this->emit('message', [$this, $message]);
-                    $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_FINISHED, [
-                        'pid' => $this->getPid(),
-                    ]));
+                    $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_FINISHED));
                     $this->state = self::STATE_RUNNING;
                     // 不在处理消息
                     if ($this->state == self::STATE_READING_EXIT) {
@@ -103,9 +101,7 @@ class Worker extends Process
                     break;
                 // 主进程已经收到了子进程的消息，并且已经准备好，这里会发送回执消息
                 case MessageAction::MESSAGE_LAST:
-                    $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_QUIT_ME, [
-                        'pid' => $this->getPid()
-                    ]));
+                    $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_QUIT_ME));
                     break;
                 case MessageAction::MESSAGE_YOU_EXIT:
                     $this->stop();
@@ -165,9 +161,7 @@ class Worker extends Process
      * @throws \Exception
      */
     public function sendReadyExitMessage() {
-        $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_READY_EXIT, [
-            'pid' => $this->getPid()
-        ]));
+        $this->sendMessage(new \Lan\Speed\Message(MessageAction::MESSAGE_READY_EXIT));
     }
     /**
      * 子进程挂起
@@ -226,13 +220,10 @@ class Worker extends Process
     /**
      * 向主进程发送消息
      * @param MessageInterface $message
+     * @throws Exception\SocketWriteException
      */
     public function sendMessage(MessageInterface $message) {
-        if ($this->communication && $this->communication->isWritable()) {
-            $this->communication->send(serialize($message));
-        } else {
-            throw new \Exception($this->getPid() . 'socket channel closed');
-        }
+        $this->IPC($message, $this->communication);
     }
 
     public function getName()

@@ -5,9 +5,11 @@ namespace Lan\Speed;
 
 use Evenement\EventEmitter;
 use Lan\Speed\Exception\MessageFormatExcetion;
+use Lan\Speed\Exception\SocketWriteException;
 use Lan\Speed\Impl\MessageInterface;
 use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
+use React\Stream\DuplexStreamInterface;
 
 /**
  * Class Process
@@ -143,7 +145,28 @@ abstract class Process extends EventEmitter
         $this->pid = $pid;
     }
 
-    public function getEventLoop() {
+    public function getEventLoop()
+    {
         return $this->eventLoop;
+    }
+
+    /**
+     * 进程通信
+     * @param MessageInterface $message
+     * @param DuplexStreamInterface $stream
+     * @param bool $hasPid
+     * @return bool
+     * @throws SocketWriteException
+     */
+    public function IPC(MessageInterface $message, DuplexStreamInterface $stream, $hasPid = true)
+    {
+        if ($stream->isWritable()) {
+            if ($hasPid) {
+                $message->setFromPID($this->getPid());
+            }
+            return $stream->write(serialize($message));
+        } else {
+            throw new SocketWriteException();
+        }
     }
 }
