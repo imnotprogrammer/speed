@@ -694,14 +694,16 @@ EOT;
             if ($this->wrapMessageProcess) {
                 $data = call_user_func($this->wrapMessageProcess, $message, $queue, $this);
             } else {
-                $data = new \Lan\Speed\Message(MessageAction::MESSAGE_CONSUME, [
+                $data = array(
                     'message' => $message,
                     'queue' => $queue
-                ]);
+                );
             }
 
+            $data = new \Lan\Speed\Message(MessageAction::MESSAGE_CONSUME, $data);
+
             // 子进程数达到最大限制
-            $isCache = $this->isMaxLimit() && !$this->scheduleWorker->hasAvailableWorker();
+            $isCache = ($this->isMaxLimit() && !$this->scheduleWorker->hasAvailableWorker());
             if ($isCache) {
                 $this->cacheMessage($data);
             } else {
