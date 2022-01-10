@@ -14,13 +14,11 @@
     ],
     "require": {
         "bunny/bunny": "^0.2.4",
-        "react/stream": "0.4.5"
-    },
-    "suggest": {
+        "react/stream": "0.4.5",
         "ext-pcntl": "*",
+        "ext-sockets": "*",
         "ext-posix": "*",
-        "ext-json": "*",
-        "ext-sockets": "*"
+        "ext-json": "*"
     },
     "require-dev": {
         "monolog/monolog": "^1.26"

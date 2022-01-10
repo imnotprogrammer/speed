@@ -63,12 +63,12 @@ class ScheduleWorker
             $this->workerInfo[$workerPID] : self::WORKER_STATE_NOT_EXIST;
 
         switch ($status) {
-            case self::WORKER_STATE_IGNORE:
             case self::WORKER_STATE_FREE:
                 if ($currentState == self::WORKER_STATE_BUSY || $currentState == self::WORKER_STATE_NOT_EXIST) {
                     $this->freeCount++;
                 }
                 break;
+            case self::WORKER_STATE_IGNORE:
             case self::WORKER_STATE_BUSY:
                 if ($currentState == self::WORKER_STATE_FREE) {
                     $this->freeCount--;

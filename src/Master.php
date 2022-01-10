@@ -355,8 +355,8 @@ class Master extends Process implements HandlerInterface
         }
 
         $this->emit('start', array($this));
-
         $this->state = self::STATE_RUNNING;
+
         $this->connection->setPrefetchCount()
             ->setMessageHandler($this)
             ->connect($this->eventLoop)
@@ -375,13 +375,11 @@ class Master extends Process implements HandlerInterface
                 if ($this->isAutoClear) {
                     $this->clearRetireWorker();
                 }
-
             } catch (\Exception $ex) {
                 if ($ex instanceof ClientException) {
                     $this->stop();
                     break;
                 }
-
                 $this->emit('error', array($ex));
             } finally {
                 $this->waitChildrenExit();
