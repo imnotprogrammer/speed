@@ -62,7 +62,7 @@ class Connection
     private $needResume = false;
 
     /**
-     * @var string 通道当前连接
+     * @var string 通道当前连接状态，默认断开
      */
     private $state = self::STATE_DISCONNECTED;
 
@@ -82,6 +82,11 @@ class Connection
         $this->options = $options;
     }
 
+    /**
+     * 队列绑定消费handler
+     * @param $queues
+     * @return array
+     */
     public function handler($queues) {
         $handlerMap = array();
         foreach (array_unique($queues) as $queue) {
@@ -125,6 +130,10 @@ class Connection
         });
     }
 
+    /**
+     * 断开连接
+     * @return \React\Promise\FulfilledPromise|\React\Promise\Promise|PromiseInterface
+     */
     public function disconnect() {
         if ($this->state == self::STATE_DISCONNECTED) {
             return resolve();
