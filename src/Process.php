@@ -42,7 +42,9 @@ abstract class Process extends EventEmitter
      */
     protected $pid;
 
-
+    /**
+     * @var array $signalHandlers 信号handlers
+     */
     private $signalHandlers = array();
 
     public function __construct() {
@@ -109,7 +111,6 @@ abstract class Process extends EventEmitter
 
         $this->signalHandlers = array();
     }
-
 
     /**
      * @return mixed
