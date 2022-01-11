@@ -311,12 +311,6 @@ class Master extends Process implements HandlerInterface
                 $this->removeAllSignal();
                 $this->eventLoop->stop();
 
-//                foreach ($this->workers as $worker) {
-//                    if (isset($worker['stream']) && !empty($worker['stream'])) {
-//                        $worker['stream']->close();
-//                    }
-//                }
-
                 fclose($sockets[1]);
 
                 unset(
@@ -669,7 +663,7 @@ EOT;
     }
 
     /**
-     * 进程消费处理器
+     * broker消息处理器|分发
      * @param Message $message
      * @param Channel $channel
      * @param BunnyClient $client

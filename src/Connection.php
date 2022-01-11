@@ -17,10 +17,19 @@ use function React\Promise\resolve;
 
 class Connection
 {
+    /** @var string 和broker连接断开 */
     const STATE_DISCONNECTED = 'disconnected';
+
+    /** @var string 和broker保持连接 */
     const STATE_CONNECTED = 'connected';
+
+    /** @var string 暂停接受broker的消息，此时channel被关闭中 */
     const STATE_PAUSING = 'pausing';
+
+    /** @var string 暂停接受broker的消息，此时channel被关闭 */
     const STATE_PAUSED = 'paused';
+
+    /** @var string 恢复接受broker的消息，此时channel正在打开中，恢复之后将状态置为connected */
     const STATE_RESUMING = 'resuming';
 
     /** @var Client $client  */
@@ -158,9 +167,17 @@ class Connection
                     return resolve();
                 }
             });
+        } else {
+            if ($this->client) {
+                return $this->client->disconnect()->then(function () {
+                    $this->state = self::STATE_DISCONNECTED;
+                    $this->client = null;
+                    return resolve();
+                });
+            } else {
+                return resolve();
+            }
         }
-
-        return resolve();
     }
 
     /**
