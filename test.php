@@ -74,14 +74,13 @@ try {
 
     $master->setName('master:dispatcher')
         ->setWrapMessageHandler(function (\Bunny\Message $message, $queue, \Lan\Speed\Master $master) {
-            return new \Lan\Speed\Message(\Lan\Speed\MessageAction::MESSAGE_CONSUME, [
+            return [
                 'message' => $message,
                 'queue' => $queue
-            ]);
-        })
-        ->setAutoClear(false)
+            ];
+        })//->enableDaemon()
         ->setMaxCacheMessageCount(2000)
-        ->setMaxWorkerNum(20)
+        ->setMaxWorkerNum(10)
         ->addSignal(SIGINT, function ($signal) use ($master) {
             $master->stop();
         })->addSignal(SIGTERM, function ($signal) use ($master) {

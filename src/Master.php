@@ -30,8 +30,6 @@ class Master extends Process implements HandlerInterface
     /** @var Connection 与broker保持的连接数 */
     private $connection;
 
-    /** @var int 主进程当前状态 */
-    private $state = self::STATE_SHUTDOWN;
 
     /** @var ScheduleWorker $scheduleWorker 进程调度器 */
     private $scheduleWorker = null;

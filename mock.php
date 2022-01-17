@@ -6,41 +6,9 @@ use Lan\Speed\Exception\ConnectException;
 use Lan\Speed\Exception\SocketCreateException;
 
 require_once 'vendor/autoload.php';
-$curl = curl_init();
+var_dump(PHP_VERSION_ID);
 
-curl_setopt_array($curl, array(
-    CURLOPT_URL => 'http://mexico-uat.loancloudmx.net/v21/score/model/externalCalculate?sign=4e430f61746ed7b4839795446a9d91fc&timestamp=1640939639',
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_ENCODING => '',
-    CURLOPT_MAXREDIRS => 10,
-    CURLOPT_TIMEOUT =>20,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-    CURLOPT_CUSTOMREQUEST => 'POST',
-    CURLOPT_POSTFIELDS => array('identifierCode' => 'fd1ddb1a1ec805e3cff8e29301706c14','data' => '1','sign' => '4e430f61746ed7b4839795446a9d91fc','timestamp' => '1640939639'),
-    CURLOPT_HTTPHEADER => array(
-        //'Accept:  application/json',
-        'Accept-Encoding:  gzip, deflate, br',
-        'Accept-Language:  zh-CN,zh;q=0.9',
-        'Content-Type:  application/json',
-        'Cookie:  PHPSESSID=2ncc2mkdm8t7l3ssmqn24qnqc3',
-        'Current-Language:  zh-CN',
-        'Host:  mexico-uat.loancloudmx.net',
-        'Origin:  https://mexico-uat.loancloudmx.net',
-        'Referer:  https://mexico-uat.loancloudmx.net/console/',
-        'sec-ch-ua-platform:  "Windows"',
-        'Sec-Fetch-Dest:  empty',
-        'Sec-Fetch-Mode:  cors',
-        'Sec-Fetch-Site:  same-origin',
-        'User-Agent:  Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-        'X-Requested-With:  XMLHttpRequest'
-    ),
-));
-
-$response = curl_exec($curl);
-
-curl_close($curl);
-echo $response;die();
+die();
 //$eventLoop = \React\EventLoop\Factory::create();
 //
 //$eventLoop->addSignal(SIGUSR1, function ($signal) {

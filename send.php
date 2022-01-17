@@ -47,11 +47,12 @@ while (!$isEnd) {
             $channel->publish(GetRandStr(1000), [], 'fanout_ex');
             $channel->publish(GetRandStr(1000), [], '', 'world');
         } catch (\Exception $ex) {
+            var_dump($ex->getMessage());
             $isEnd = true;
             break;
         }
     }
-    sleep(1);
+    sleep(mt_rand(1, 100));
 }
 $channel->close();
 $client->disconnect();

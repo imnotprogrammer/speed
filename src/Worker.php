@@ -14,10 +14,6 @@ class Worker extends Process
     /** @var Stream $communication */
     private $communication;
 
-    /**
-     * @var int 进程当前状态
-     */
-    private $state = self::STATE_SHUTDOWN;
 
     /**
      * @var int 进程最大空闲时间，超过此值，会自动退出

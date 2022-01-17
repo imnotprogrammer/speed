@@ -37,4 +37,10 @@ final class MessageAction
     // 父进程发送给子进程
     const MESSAGE_YOU_EXIT = 7;
 
+    /** @var int 分发job */
+    const MESSAGE_DISPATCH_JOB = 10;
+
+    /** @var int 任务完成 */
+    const MESSAGE_FINISHED_JOB = 11;
+
 }

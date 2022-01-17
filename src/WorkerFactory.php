@@ -17,20 +17,21 @@ class WorkerFactory
     /** @var bool 是否覆盖自己包含的SIGINT,SIGTERM 信号 */
     protected $coverKillSignal = false;
 
+    private $workerClass = null;
+
     /**
      * 创建子进程
      * @param $socket
      * @return Worker
      */
     public function makeWorker($socket) {
-        $worker = new Worker($socket);
-        $worker->addSignal(SIGINT, function ($signal) use ($worker) {
-            //$worker->stop();
-        });
-
-        $worker->addSignal(SIGTERM, function ($signal) use ($worker) {
-            //$worker->stop();
-        });
+        if ($this->workerClass) {
+            $class = $this->workerClass;
+            /** @var Process $worker */
+            $worker = new $class($socket);
+        } else {
+            $worker = new Worker($socket);
+        }
 
         if ($this->signalHandlers) {
             foreach ($this->signalHandlers as $signal => $handlers) {
@@ -100,6 +101,11 @@ class WorkerFactory
      */
     public function setCoverKillSignal($status) {
         $this->coverKillSignal = $status;
+        return $this;
+    }
+
+    public function setWorkerClass($className) {
+        $this->workerClass = $className;
         return $this;
     }
 }

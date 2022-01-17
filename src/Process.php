@@ -43,6 +43,11 @@ abstract class Process extends EventEmitter
     protected $pid;
 
     /**
+     * @var int 当前进程状态
+     */
+    protected $state = self::STATE_SHUTDOWN;
+
+    /**
      * @var array $signalHandlers 信号handlers
      */
     private $signalHandlers = array();
@@ -135,7 +140,7 @@ abstract class Process extends EventEmitter
      */
     public function getPid()
     {
-        return $this->pid;
+        return $this->pid ?: posix_getpid();
     }
 
     /**
@@ -168,6 +173,17 @@ abstract class Process extends EventEmitter
             return $stream->write(serialize($message));
         } else {
             throw new SocketWriteException();
+        }
+    }
+
+
+    /**
+     * 安全打印信息
+     * @param $message
+     */
+    public function safeEcho($message) {
+        if (!function_exists('posix_isatty') || posix_isatty(STDOUT)) {
+            echo $message.PHP_EOL;
         }
     }
 }
