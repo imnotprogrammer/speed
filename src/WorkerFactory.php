@@ -18,19 +18,22 @@ class WorkerFactory
     protected $coverKillSignal = false;
 
     /**
+     * @var string 需要实例化的worker类
+     */
+    private $workerClass = Worker::class;
+
+    /**
      * 创建子进程
      * @param $socket
      * @return Worker
      */
     public function makeWorker($socket) {
-        $worker = new Worker($socket);
-        $worker->addSignal(SIGINT, function ($signal) use ($worker) {
-            //$worker->stop();
-        });
+        if (!$this->workerClass) {
+            throw new \RuntimeException('To create worker class not null');
+        }
 
-        $worker->addSignal(SIGTERM, function ($signal) use ($worker) {
-            //$worker->stop();
-        });
+        $class = $this->workerClass;
+        $worker = new $class($socket);
 
         if ($this->signalHandlers) {
             foreach ($this->signalHandlers as $signal => $handlers) {
@@ -101,5 +104,9 @@ class WorkerFactory
     public function setCoverKillSignal($status) {
         $this->coverKillSignal = $status;
         return $this;
+    }
+
+    public function setWorkerClass($class) {
+        $this->workerClass = $class;
     }
 }

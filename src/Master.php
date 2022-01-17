@@ -24,6 +24,8 @@ use React\Promise\Promise;
  */
 class Master extends Process implements HandlerInterface
 {
+    use \Lan\Speed\Traits\Master;
+
     /** @var WorkerFactory  进程创建工厂 */
     private $workerFactory;
 
@@ -266,73 +268,6 @@ class Master extends Process implements HandlerInterface
     }
 
     /**
-     * 创建子进程，创建时机为没有空闲子进程时，系统自动创建进程处理任务
-     * @return int 进程id
-     * @throws SocketCreateException
-     * @throws WorkerCreateException
-     */
-    public function createWorker() {
-        $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
-        if (!$sockets) {
-            throw new SocketCreateException();
-        }
-
-        $pid = pcntl_fork();
-        if ($pid > 0) { // 父进程
-            fclose($sockets[0]);
-            unset($sockets[0]);
-
-            $stream = new Stream($sockets[1], $this->eventLoop);
-            $stream->on('data', array($stream, 'baseRead'));
-            $stream->on('message', array($this, 'onReceive'));
-            $stream->on('error', function ($error, Stream $stream) use ($pid) {
-                $stream->close();
-                posix_kill($pid, SIGINT);
-                throw new SocketWriteException($error->getMessage());
-            });
-
-            $stream->on('close', function ($stream) use ($pid) {
-                 if (!isset($this->workers[$pid])) {
-                     return;
-                 }
-
-                 unset($this->workers[$pid]);
-                 $this->scheduleWorker->retireWorker($pid);
-                 $this->emit('workerExit', array($pid, $this));
-            });
-
-            $this->workers[$pid]['stream'] = $stream;
-            $this->statistics[$pid] = $this->initStatistics();
-            $this->scheduleWorker->workerFree($pid);
-        } else if ($pid == 0) {
-            try {
-                $this->cancelProcessTimer();
-                $this->removeAllListeners();
-                $this->removeAllSignal();
-                $this->eventLoop->stop();
-
-                fclose($sockets[1]);
-
-                unset(
-                    $sockets[1], $this->eventLoop, $this->statistics, //$this->workers,
-                    $this->stashMessage, $this->scheduleWorker
-                );
-
-                $worker = $this->workerFactory->makeWorker($sockets[0]);
-                $worker->run();
-            } catch (\Exception $ex) {
-                exit(-1);
-            }
-
-        } else {
-            throw new WorkerCreateException();
-        }
-
-        return $pid;
-    }
-
-
-    /**
      * 主进程启动，正式开始任务循环分配
      * @throws DaemonException
      * @throws WorkerCreateException
@@ -437,29 +372,6 @@ EOT;
         }
     }
 
-    /**
-     * 安全打印信息
-     * @param $message
-     */
-    public function safeEcho($message) {
-        if (!function_exists('posix_isatty') || posix_isatty(STDOUT)) {
-            echo $message.PHP_EOL;
-        }
-    }
-
-    /**
-     * 异步时间循环处理器
-     * @param $period
-     */
-    public function loop($period) {
-        if ($period) {
-            $this->processTimer = $this->eventLoop->addTimer($period, function ($timer) {
-                $this->stopLoop();
-            });
-        }
-
-        $this->eventLoop->run();
-    }
 
     /**
      * 停止事件循环器
@@ -492,15 +404,7 @@ EOT;
         }
     }
 
-    /**
-     * 移除阻塞定时器
-     */
-    public function cancelProcessTimer() {
-        if ($this->processTimer) {
-            $this->eventLoop->cancelTimer($this->processTimer);
-            $this->processTimer = null;
-        }
-    }
+
 
     /**
      * 派发消息给子进程
@@ -558,37 +462,6 @@ EOT;
             }
         } else if ($this->state == self::STATE_FLUSH_CACHE) {
             //$this->state = self::STATE_SHUTDOWN;
-        }
-    }
-
-    /**
-     * 进程后台挂起
-     * @throws DaemonException
-     * @throws WorkerCreateException
-     */
-    public function daemon() {
-        if (!extension_loaded('pcntl')) {
-            throw new DaemonException();
-        }
-
-        umask(0);
-        $pid = pcntl_fork();
-        if ($pid == -1) {
-            throw new WorkerCreateException();
-        } elseif ($pid > 0) {
-            // 让由用户启动的进程退出
-            exit(0);
-        }
-
-        // 建立一个有别于终端的新session以脱离终端
-        posix_setsid();
-
-        $pid = pcntl_fork();
-        if ($pid == -1) {
-            throw new WorkerCreateException();
-        } elseif ($pid > 0) {
-            // 父进程退出, 剩下子进程成为最终的独立进程
-            exit(0);
         }
     }
 

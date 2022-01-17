@@ -170,4 +170,15 @@ abstract class Process extends EventEmitter
             throw new SocketWriteException();
         }
     }
+
+
+    /**
+     * 安全打印信息
+     * @param $message
+     */
+    public function safeEcho($message) {
+        if (!function_exists('posix_isatty') || posix_isatty(STDOUT)) {
+            echo $message.PHP_EOL;
+        }
+    }
 }
