@@ -45,11 +45,11 @@ class TaskWorker extends Process
         $this->stream->on('data', [$this->stream, 'baseRead']);
         $this->stream->on('message', [$this, 'onReceive']);
         $this->stream->on('error', function (\Exception $error, Stream $stream) {
-            var_dump($this->isEnd);
-            if ($this->isEnd) {
-                return;
-            }
             $this->emit('error', [$error, $this]);
+            if ($this->executedStatus == self::EXECUTED_STATUS_RUNNING) {
+                $this->isEnd = true;
+            }
+
         });
         $this->stream->on('close', function () {
             $this->stop();
@@ -141,19 +141,7 @@ class TaskWorker extends Process
                 $this->executedStatus = self::EXECUTED_STATUS_RUNNING;
 
                 try {
-                    $this->timeoutTimer = $this->eventLoop->addTimer($job->getTimeout() + 1, function () use ($job) {
-                        // 程序是否处于运行状态且超时需要立即退出
-                        if ($this->executedStatus == self::EXECUTED_STATUS_RUNNING &&
-                            !$job->alwaysExecuteWhenTimeout()
-                        ) {
-                            $this->stop();
-                        }
-
-                        $this->removeTimeoutTimer();
-                    });
-
                     $job->run();
-                    $this->removeTimeoutTimer();
                     $this->executedStatus = self::EXECUTED_STATUS_NO_RUNNING;
 
                 } catch (\Exception $ex) {

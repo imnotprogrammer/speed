@@ -20,8 +20,15 @@ class Test implements JobInterface
 
     public function run()
     {
-        sleep($this->timeout+2);
-        var_dump(1);
+        $time = time();
+        while(true) {
+            sleep(1);
+            if ((time() - $time) > 80) {
+                break;
+            }
+        }
+        sleep(1);
+        var_dump('job start to execute');
     }
 
     public function getTimeout()

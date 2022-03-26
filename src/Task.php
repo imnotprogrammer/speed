@@ -29,7 +29,8 @@ class Task extends Process
      */
     private $workerFactory;
 
-    private $processTimer = null;
+    private $checkTimer;
+
 
     public function __construct(WorkerFactory $workerFactory) {
         $this->scheduleWorker = new ScheduleWorker();
@@ -52,6 +53,25 @@ class Task extends Process
             }
         });
 
+
+        $this->checkTimer = $this->eventLoop->addPeriodicTimer(1, function () {
+            foreach ($this->tasks as $jobId => $task) {
+
+                /** @var JobInterface $job */
+                $job = $task['job'];
+                if (time() - $task['lastStartTime'] > $job->getTimeout()) {
+                    // 不需要立即执行
+                    if (!$job->alwaysExecuteWhenTimeout()) {
+                        if (!isset($this->tasks['jobId']['executePid'])) {
+                            continue;
+                        }
+                        // 超时 需要终止;
+                        posix_kill($this->tasks['jobId']['executePid'], SIGUSR1);
+                    }
+                }
+            }
+        });
+
         $this->state = self::STATE_RUNNING;
 
         while ($this->state == self::STATE_RUNNING) {
@@ -70,7 +90,9 @@ class Task extends Process
      * @throws SocketWriteException
      */
     public function clearWorkers() {
-
+        foreach ($this->workers as $pid => $worker) {
+            posix_kill($pid, SIGUSR1);
+        }
     }
 
     /**
@@ -105,6 +127,7 @@ class Task extends Process
                 $this->workers[$pid]['jobId'] = $jobId;  // 标识当前进程有任务执行
                 $this->tasks[$jobId]['state'] = self::JOB_STATE_RUNNING;
                 $this->tasks[$jobId]['lastStartTime'] = time();
+                $this->tasks[$jobId]['executePid'] = $pid;
 
                 if (!$this->tasks[$jobId]['firstExecuteTime']) {
                     $this->tasks[$jobId]['firstExecuteTime'] = time();
@@ -269,6 +292,11 @@ class Task extends Process
      * @return string
      */
     public function createJobID($job) {
-        return md5(spl_object_hash($job));
+        if (function_exists('spl_object_id')) {
+            return spl_object_id($job);
+        } else {
+            return md5(spl_object_hash($job)  . time() );
+        }
+
     }
 }

@@ -22,22 +22,22 @@ class job
     }
 
     public function init() {
-        $this->createWorkeFactory();
+        $this->createWorkerFactory();
         $this->createMaster();
     }
 
     /**
      * worker创建者
      */
-    public function createWorkeFactory() {
+    public function createWorkerFactory() {
         $this->workerFactory = new \Lan\Speed\WorkerFactory();
         $this->workerFactory->registerEvent('start', function (\Lan\Speed\TaskWorker $worker) {
             $worker->setName('php:job:worker:' . $worker->getPid());
         })->registerEvent('error', function (Exception $ex, \Lan\Speed\TaskWorker $worker) {
             var_dump($worker->getPid(), $ex->getMessage(), $ex->getTraceAsString());
-            $worker->stop();
+            //$worker->stop();
         })->addSignal(SIGUSR1, function ($signal, \Lan\Speed\TaskWorker $worker) {
-            $worker->setEnd(true);
+            $worker->stop();
         })->setWorkerClass(\Lan\Speed\TaskWorker::class);
     }
 
