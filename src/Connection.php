@@ -277,9 +277,7 @@ class Connection
             $promise[] = $channel->consume($handler, $queue);
         }
 
-        return all($promise)->then(null, function ($ex) {
-            var_dump($ex->getMessage());
-        });
+        return all($promise);
     }
 
     public function setPrefetchCount($count = 1) {
